@@ -14,6 +14,8 @@ import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeField;
 import org.opensearch.analytics.exec.QueryPlanExecutor;
+import org.opensearch.analytics.exec.profile.ProfiledResult;
+import org.opensearch.analytics.exec.profile.QueryProfile;
 import org.opensearch.core.action.ActionListener;
 import org.opensearch.sql.ast.statement.ExplainMode;
 import org.opensearch.sql.calcite.CalcitePlanContext;
@@ -108,14 +110,36 @@ public class AnalyticsExecutionEngine implements ExecutionEngine {
       ExplainMode mode,
       CalcitePlanContext context,
       ResponseListener<ExplainResponse> listener) {
-    try {
-      String logical = RelOptUtil.toString(plan, mode.toExplainLevel());
-      ExplainResponse response =
-          new ExplainResponse(new ExplainResponseNodeV2(logical, null, null));
-      listener.onResponse(ExplainResponse.normalizeLf(response));
-    } catch (Exception e) {
-      listener.onFailure(e);
-    }
+    String logical = RelOptUtil.toString(plan, mode.toExplainLevel());
+
+    planExecutor.executeWithProfile(
+        plan,
+        null,
+        new ActionListener<>() {
+          @Override
+          public void onResponse(ProfiledResult result) {
+            try {
+              QueryProfile profile = result.profile();
+              ExplainResponse response =
+                  new ExplainResponse(new ExplainResponseNodeV2(logical, null, null, profile));
+              listener.onResponse(ExplainResponse.normalizeLf(response));
+            } catch (Exception e) {
+              listener.onFailure(e);
+            }
+          }
+
+          @Override
+          public void onFailure(Exception e) {
+            // Fall back to plan-only explain if profiling fails
+            try {
+              ExplainResponse response =
+                  new ExplainResponse(new ExplainResponseNodeV2(logical, null, null, null));
+              listener.onResponse(ExplainResponse.normalizeLf(response));
+            } catch (Exception ex) {
+              listener.onFailure(ex);
+            }
+          }
+        });
   }
 
   private List<ExprValue> convertRows(Iterable<Object[]> rows, List<RelDataTypeField> fields) {

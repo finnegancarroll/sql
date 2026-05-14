@@ -13,6 +13,7 @@ import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.ToString;
 import org.apache.calcite.rel.RelNode;
+import org.opensearch.analytics.exec.profile.QueryProfile;
 import org.opensearch.sql.ast.statement.ExplainMode;
 import org.opensearch.sql.calcite.CalcitePlanContext;
 import org.opensearch.sql.common.response.ResponseListener;
@@ -134,7 +135,8 @@ public interface ExecutionEngine {
             new ExecutionEngine.ExplainResponseNodeV2(
                 normalizeLf(calcite.getLogical()),
                 normalizeLf(calcite.getPhysical()),
-                normalizeLf(calcite.getExtended())));
+                normalizeLf(calcite.getExtended()),
+                calcite.getProfile()));
       }
       return response;
     }
@@ -153,12 +155,17 @@ public interface ExecutionEngine {
     private List<ExplainResponseNode> children;
   }
 
-  @RequiredArgsConstructor
+  @AllArgsConstructor
   @Data
   @ToString
   class ExplainResponseNodeV2 {
     private final String logical;
     private final String physical;
     private final String extended;
+    private final QueryProfile profile;
+
+    public ExplainResponseNodeV2(String logical, String physical, String extended) {
+      this(logical, physical, extended, null);
+    }
   }
 }
