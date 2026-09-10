@@ -69,6 +69,9 @@ public enum BuiltinFunctionName {
 
   /** Collection functions */
   ARRAY(FunctionName.of("array")),
+  ARRAY_CONTAINS(FunctionName.of("array_contains")),
+  ARRAY_JOIN(FunctionName.of("array_join")),
+  CARDINALITY(FunctionName.of("cardinality")),
   FOREACH_JSON_ARRAY(FunctionName.of("foreach_json_array"), true),
   FOREACH_PAIR_COLLECTION(FunctionName.of("foreach_pair_collection"), true),
   FOREACH_STATE(FunctionName.of("foreach_state"), true),
@@ -357,6 +360,12 @@ public enum BuiltinFunctionName {
   WILDCARD_QUERY(FunctionName.of("wildcard_query")),
 
   /** Internal functions that are not exposed to customers. */
+  INTERNAL_ARRAY_ANY_COMPARE(FunctionName.of("array_any_compare"), true),
+  INTERNAL_ARRAY_ANY_BETWEEN(FunctionName.of("array_any_between"), true),
+  INTERNAL_ARRAY_MAP_STRING(FunctionName.of("array_map_string"), true),
+  INTERNAL_ARRAY_MAP_INTEGER(FunctionName.of("array_map_integer"), true),
+  INTERNAL_ARRAY_NULLIF(FunctionName.of("array_nullif"), true),
+  INTERNAL_ARRAY_COALESCE(FunctionName.of("array_coalesce"), true),
   INTERNAL_ITEM(FunctionName.of("item"), true),
   INTERNAL_PATTERN_PARSER(FunctionName.of("pattern_parser")),
   INTERNAL_PATTERN(FunctionName.of("pattern")),

@@ -248,6 +248,10 @@ public class CalciteRexNodeVisitor extends AbstractNodeVisitor<RexNode, CalciteP
     // PPL `=` comparisons, the same temporal-aware comparison path visitCompare takes for `=`, so
     // each value is coerced to the field's timestamp domain before comparison.
     ExprType fieldExprType = OpenSearchTypeFactory.convertRelDataTypeToExprType(field.getType());
+    if (isArray(field) && valueList.stream().noneMatch(this::isArray)) {
+      return context.relBuilder.or(
+          valueList.stream().map(value -> makeArrayContains(field, value, context)).toList());
+    }
     if (TEMPORAL_TYPES.contains(fieldExprType)) {
       List<RexNode> equalities =
           valueList.stream()
@@ -275,11 +279,188 @@ public class CalciteRexNodeVisitor extends AbstractNodeVisitor<RexNode, CalciteP
   private static final Set<ExprType> TEMPORAL_TYPES =
       Set.of(ExprCoreType.DATE, ExprCoreType.TIME, ExprCoreType.TIMESTAMP);
 
+  private boolean isArray(RexNode node) {
+    return node.getType().getSqlTypeName() == SqlTypeName.ARRAY;
+  }
+
+  private RexNode makeArrayContains(RexNode array, RexNode value, CalcitePlanContext context) {
+    return PPLFuncImpTable.INSTANCE.resolve(
+        context.rexBuilder, BuiltinFunctionName.ARRAY_CONTAINS, array, value);
+  }
+
+  private RexNode castToArrayElementType(RexNode array, RexNode value, CalcitePlanContext context) {
+    RelDataType componentType = array.getType().getComponentType();
+    return componentType == null ? value : context.rexBuilder.makeCast(componentType, value);
+  }
+
+  private String reverseComparison(String operator) {
+    return switch (operator) {
+      case ">" -> "<";
+      case ">=" -> "<=";
+      case "<" -> ">";
+      case "<=" -> ">=";
+      default -> operator;
+    };
+  }
+
+  private String arrayComparisonMode(String operator) {
+    return switch (operator) {
+      case ">" -> "gt";
+      case ">=" -> "gte";
+      case "<" -> "lt";
+      case "<=" -> "lte";
+      default -> operator;
+    };
+  }
+
+  private @Nullable RexNode rewriteArrayScalarComparison(
+      String operator, RexNode left, RexNode right, CalcitePlanContext context) {
+    if (isArray(left) == isArray(right)) {
+      return null;
+    }
+    RexNode array = isArray(left) ? left : right;
+    RexNode scalar = castToArrayElementType(array, isArray(left) ? right : left, context);
+    if ("=".equals(operator)) {
+      return makeArrayContains(array, scalar, context);
+    }
+    if ("!=".equals(operator) || "<>".equals(operator)) {
+      return context.relBuilder.not(makeArrayContains(array, scalar, context));
+    }
+    return PPLFuncImpTable.INSTANCE.resolve(
+        context.rexBuilder,
+        BuiltinFunctionName.INTERNAL_ARRAY_ANY_COMPARE,
+        array,
+        scalar,
+        context.rexBuilder.makeLiteral(
+            arrayComparisonMode(isArray(left) ? operator : reverseComparison(operator))));
+  }
+
+  private @Nullable RexNode rewriteArrayPatternFunction(
+      String functionName, List<RexNode> arguments, CalcitePlanContext context) {
+    if (arguments.size() != 2 || !isArray(arguments.get(0))) {
+      return null;
+    }
+    BuiltinFunctionName function = BuiltinFunctionName.of(functionName).orElse(null);
+    if (function != BuiltinFunctionName.LIKE && function != BuiltinFunctionName.REGEXP) {
+      return null;
+    }
+    RexNode array = arguments.get(0);
+    RexNode pattern = castToArrayElementType(array, arguments.get(1), context);
+    String operation =
+        function == BuiltinFunctionName.REGEXP
+            ? "regex"
+            : (CalcitePlanContext.isLegacyPreferred() ? "ilike" : "like");
+    return PPLFuncImpTable.INSTANCE.resolve(
+        context.rexBuilder,
+        BuiltinFunctionName.INTERNAL_ARRAY_ANY_COMPARE,
+        array,
+        pattern,
+        context.rexBuilder.makeLiteral(operation));
+  }
+
+  // ==================== Element-wise ARRAY expression helpers ====================
+  //
+  // Scalar string/int functions applied to an ARRAY<STRING> argument map element-wise and return an
+  // array. String-returning functions (UPPER, LOWER, TRIM, LTRIM, RTRIM, SUBSTRING, REPLACE,
+  // REVERSE) produce ARRAY<STRING>; int-returning functions (LENGTH, ASCII, POSITION, LOCATE)
+  // produce ARRAY<INTEGER>. Semantics: null array -> null array, empty array -> empty array, null
+  // elements preserved, order preserved. The concrete per-element behavior lives in the native
+  // array_map_string / array_map_integer UDFs; the frontend only carries the base function name
+  // (as a literal) plus any extra scalar arguments. This does NOT alter predicate semantics — the
+  // predicate rewrites above (comparison / pattern) run first and short-circuit.
+
+  /**
+   * Scalar string functions that map element-wise over an ARRAY<STRING> and return ARRAY<STRING>.
+   */
+  private static final Set<String> ARRAY_MAP_STRING_FUNCTIONS =
+      Set.of(
+          "upper", "lower", "trim", "ltrim", "rtrim", "substring", "substr", "replace", "reverse");
+
+  /** Scalar functions that map element-wise over an ARRAY<STRING> and return ARRAY<INTEGER>. */
+  private static final Set<String> ARRAY_MAP_INTEGER_FUNCTIONS =
+      Set.of("length", "ascii", "position", "locate");
+
+  /**
+   * Rewrite a scalar string/int function whose first argument is an ARRAY into the corresponding
+   * element-wise internal operator. Returns {@code null} when the function is not element-wise
+   * eligible or its first argument is not an array, leaving normal scalar resolution untouched.
+   */
+  private @Nullable RexNode rewriteArrayElementWiseFunction(
+      String functionName, List<RexNode> arguments, CalcitePlanContext context) {
+    if (arguments.isEmpty()) {
+      return null;
+    }
+    String lower = functionName.toLowerCase(Locale.ROOT);
+    RexNode array;
+    List<RexNode> extraArguments;
+    final BuiltinFunctionName target;
+    if (ARRAY_MAP_STRING_FUNCTIONS.contains(lower) && isArray(arguments.get(0))) {
+      array = arguments.get(0);
+      extraArguments = arguments.subList(1, arguments.size());
+      target = BuiltinFunctionName.INTERNAL_ARRAY_MAP_STRING;
+    } else if (ARRAY_MAP_INTEGER_FUNCTIONS.contains(lower) && isArray(arguments.get(0))) {
+      array = arguments.get(0);
+      extraArguments = arguments.subList(1, arguments.size());
+      target = BuiltinFunctionName.INTERNAL_ARRAY_MAP_INTEGER;
+    } else if (("position".equals(lower) || "locate".equals(lower))
+        && arguments.size() >= 2
+        && !isArray(arguments.get(0))
+        && isArray(arguments.get(1))) {
+      // SQL POSITION(needle IN haystack) and LOCATE(needle, haystack[, start]) place the ARRAY
+      // haystack second. Native mapping always receives array, function name, needle, [start].
+      array = arguments.get(1);
+      extraArguments = new ArrayList<>();
+      extraArguments.add(arguments.get(0));
+      extraArguments.addAll(arguments.subList(2, arguments.size()));
+      target = BuiltinFunctionName.INTERNAL_ARRAY_MAP_INTEGER;
+    } else {
+      return null;
+    }
+    List<RexNode> operands = new ArrayList<>();
+    operands.add(array);
+    operands.add(context.rexBuilder.makeLiteral(lower));
+    operands.addAll(extraArguments);
+    return PPLFuncImpTable.INSTANCE.resolve(
+        context.rexBuilder, target, operands.toArray(new RexNode[0]));
+  }
+
+  /**
+   * Rewrite {@code NULLIF(array, scalar)} and {@code COALESCE(array, scalar)} into their
+   * element-wise / array-aware internal operators. {@code NULLIF} replaces matching elements with
+   * null; {@code COALESCE} returns the array or a singleton fallback. Returns {@code null} for the
+   * non-array (ordinary scalar) case so standard resolution applies.
+   */
+  private @Nullable RexNode rewriteArrayConditionalFunction(
+      String functionName, List<RexNode> arguments, CalcitePlanContext context) {
+    if (arguments.size() != 2) {
+      return null;
+    }
+    boolean firstIsArray = isArray(arguments.get(0));
+    if ("nullif".equalsIgnoreCase(functionName) && firstIsArray && !isArray(arguments.get(1))) {
+      RexNode scalar = castToArrayElementType(arguments.get(0), arguments.get(1), context);
+      return PPLFuncImpTable.INSTANCE.resolve(
+          context.rexBuilder, BuiltinFunctionName.INTERNAL_ARRAY_NULLIF, arguments.get(0), scalar);
+    }
+    if ("coalesce".equalsIgnoreCase(functionName) && firstIsArray && !isArray(arguments.get(1))) {
+      RexNode scalar = castToArrayElementType(arguments.get(0), arguments.get(1), context);
+      return PPLFuncImpTable.INSTANCE.resolve(
+          context.rexBuilder,
+          BuiltinFunctionName.INTERNAL_ARRAY_COALESCE,
+          arguments.get(0),
+          scalar);
+    }
+    return null;
+  }
+
   @Override
   public RexNode visitCompare(Compare node, CalcitePlanContext context) {
     RexNode left = analyze(node.getLeft(), context);
     RexNode right = analyze(node.getRight(), context);
     String op = node.getOperator();
+    RexNode arrayMembership = rewriteArrayScalarComparison(op, left, right, context);
+    if (arrayMembership != null) {
+      return arrayMembership;
+    }
     // Handle boolean_field != literal -> IS_NOT_TRUE/IS_NOT_FALSE
     if ("!=".equals(op) || "<>".equals(op)) {
       RexNode result = tryMakeBooleanNotEquals(left, right, context);
@@ -314,6 +495,16 @@ public class CalciteRexNodeVisitor extends AbstractNodeVisitor<RexNode, CalciteP
     RexNode value = analyze(node.getValue(), context);
     RexNode lowerBound = analyze(node.getLowerBound(), context);
     RexNode upperBound = analyze(node.getUpperBound(), context);
+    if (isArray(value) && !isArray(lowerBound) && !isArray(upperBound)) {
+      RexNode castLower = castToArrayElementType(value, lowerBound, context);
+      RexNode castUpper = castToArrayElementType(value, upperBound, context);
+      return PPLFuncImpTable.INSTANCE.resolve(
+          context.rexBuilder,
+          BuiltinFunctionName.INTERNAL_ARRAY_ANY_BETWEEN,
+          value,
+          castLower,
+          castUpper);
+    }
     RelDataType commonType = context.rexBuilder.commonType(value, lowerBound, upperBound);
     if (commonType != null) {
       lowerBound = context.rexBuilder.makeCast(commonType, lowerBound);
@@ -346,7 +537,8 @@ public class CalciteRexNodeVisitor extends AbstractNodeVisitor<RexNode, CalciteP
   public RexNode visitEqualTo(EqualTo node, CalcitePlanContext context) {
     final RexNode left = analyze(node.getLeft(), context);
     final RexNode right = analyze(node.getRight(), context);
-    return context.rexBuilder.equals(left, right);
+    RexNode arrayMembership = rewriteArrayScalarComparison("=", left, right, context);
+    return arrayMembership != null ? arrayMembership : context.rexBuilder.equals(left, right);
   }
 
   // ==================== Boolean NOT comparison helpers ====================
@@ -715,6 +907,34 @@ public class CalciteRexNodeVisitor extends AbstractNodeVisitor<RexNode, CalciteP
         arguments = new ArrayList<>(arguments);
         arguments.addAll(capturedVars);
       }
+    }
+
+    if (arguments.size() == 2
+        && BuiltinFunctionName.of(node.getFuncName())
+            .filter(BuiltinFunctionName.COMPARATORS::contains)
+            .isPresent()) {
+      RexNode arrayMembership =
+          rewriteArrayScalarComparison(
+              node.getFuncName(), arguments.get(0), arguments.get(1), context);
+      if (arrayMembership != null) {
+        return arrayMembership;
+      }
+    }
+
+    RexNode arrayPattern = rewriteArrayPatternFunction(node.getFuncName(), arguments, context);
+    if (arrayPattern != null) {
+      return arrayPattern;
+    }
+
+    RexNode elementWise = rewriteArrayElementWiseFunction(node.getFuncName(), arguments, context);
+    if (elementWise != null) {
+      return elementWise;
+    }
+
+    RexNode arrayConditional =
+        rewriteArrayConditionalFunction(node.getFuncName(), arguments, context);
+    if (arrayConditional != null) {
+      return arrayConditional;
     }
 
     if ("LIKE".equalsIgnoreCase(node.getFuncName()) && arguments.size() == 2) {

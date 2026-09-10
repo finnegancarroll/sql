@@ -56,9 +56,24 @@ public final class PPLReturnTypes {
   public static final SqlReturnTypeInference STRING_ARRAY =
       opBinding -> {
         RelDataTypeFactory typeFactory = opBinding.getTypeFactory();
-        // Always return array of strings since multivalue functions convert everything to strings
+        // Multivalue functions convert values to strings while preserving null elements.
         RelDataType stringType =
-            typeFactory.createSqlType(org.apache.calcite.sql.type.SqlTypeName.VARCHAR);
+            typeFactory.createTypeWithNullability(
+                typeFactory.createSqlType(org.apache.calcite.sql.type.SqlTypeName.VARCHAR), true);
         return SqlTypeUtil.createArrayType(typeFactory, stringType, true);
+      };
+
+  /**
+   * Array of INTEGER elements, nullable at both the array and element level. Used by element-wise
+   * ARRAY expression functions whose scalar counterpart returns an integer (e.g. {@code LENGTH},
+   * {@code ASCII}, {@code POSITION}, {@code LOCATE} mapped over an {@code ARRAY<STRING>}).
+   */
+  public static final SqlReturnTypeInference INTEGER_ARRAY =
+      opBinding -> {
+        RelDataTypeFactory typeFactory = opBinding.getTypeFactory();
+        RelDataType integerType =
+            typeFactory.createTypeWithNullability(
+                typeFactory.createSqlType(org.apache.calcite.sql.type.SqlTypeName.INTEGER), true);
+        return SqlTypeUtil.createArrayType(typeFactory, integerType, true);
       };
 }

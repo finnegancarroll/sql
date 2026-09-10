@@ -329,6 +329,68 @@ import org.opensearch.sql.expression.function.CollectionUDF.MVIndexFunctionImp;
 public class PPLFuncImpTable {
   private static final Logger logger = LogManager.getLogger(PPLFuncImpTable.class);
 
+  static final SqlOperator ARRAY_ANY_COMPARE_OP =
+      org.apache.calcite.sql.SqlBasicFunction.create(
+          "array_any_compare",
+          org.apache.calcite.sql.type.ReturnTypes.BOOLEAN_NULLABLE,
+          OperandTypes.family(
+              SqlTypeFamily.ARRAY, SqlTypeFamily.CHARACTER, SqlTypeFamily.CHARACTER));
+
+  static final SqlOperator ARRAY_ANY_BETWEEN_OP =
+      org.apache.calcite.sql.SqlBasicFunction.create(
+          "array_any_between",
+          org.apache.calcite.sql.type.ReturnTypes.BOOLEAN_NULLABLE,
+          OperandTypes.family(
+              SqlTypeFamily.ARRAY, SqlTypeFamily.CHARACTER, SqlTypeFamily.CHARACTER));
+
+  /**
+   * Element-wise ARRAY string mapper. Applies a scalar string function (named by the second,
+   * literal operand) to every element of the {@code ARRAY<STRING>} first operand, preserving order,
+   * null elements, and empty arrays; a null array yields a null array. Any remaining operands are
+   * the extra scalar arguments of the underlying function (e.g. {@code SUBSTRING}'s start/length,
+   * {@code REPLACE}'s from/to). Returns {@code ARRAY<STRING>}. Backed by the native {@code
+   * array_map_string} UDF.
+   */
+  static final SqlOperator ARRAY_MAP_STRING_OP =
+      org.apache.calcite.sql.SqlBasicFunction.create(
+          "array_map_string",
+          org.opensearch.sql.calcite.utils.PPLReturnTypes.STRING_ARRAY,
+          OperandTypes.VARIADIC);
+
+  /**
+   * Element-wise ARRAY integer mapper. Applies a scalar string function that returns an integer
+   * (named by the second, literal operand) to every element of the {@code ARRAY<STRING>} first
+   * operand, preserving order, null elements, and empty arrays; a null array yields a null array.
+   * Returns {@code ARRAY<INTEGER>}. Backed by the native {@code array_map_integer} UDF.
+   */
+  static final SqlOperator ARRAY_MAP_INTEGER_OP =
+      org.apache.calcite.sql.SqlBasicFunction.create(
+          "array_map_integer",
+          org.opensearch.sql.calcite.utils.PPLReturnTypes.INTEGER_ARRAY,
+          OperandTypes.VARIADIC);
+
+  /**
+   * {@code NULLIF(array, scalar)} element-wise: replace every element equal to the scalar with
+   * null, preserving order and length; a null array yields a null array. Returns the array's own
+   * type. Backed by the native {@code array_nullif} UDF.
+   */
+  static final SqlOperator ARRAY_NULLIF_OP =
+      org.apache.calcite.sql.SqlBasicFunction.create(
+          "array_nullif",
+          org.opensearch.sql.calcite.utils.PPLReturnTypes.ARG0_ARRAY,
+          OperandTypes.family(SqlTypeFamily.ARRAY, SqlTypeFamily.ANY));
+
+  /**
+   * {@code COALESCE(array, scalar)}: return the array unchanged when it is non-null, otherwise a
+   * singleton array containing the scalar fallback. Returns the array's own type. Backed by the
+   * native {@code array_coalesce} UDF.
+   */
+  static final SqlOperator ARRAY_COALESCE_OP =
+      org.apache.calcite.sql.SqlBasicFunction.create(
+          "array_coalesce",
+          org.opensearch.sql.calcite.utils.PPLReturnTypes.ARG0_ARRAY,
+          OperandTypes.family(SqlTypeFamily.ARRAY, SqlTypeFamily.ANY));
+
   /** A lambda function interface which could apply parameters to get AggCall. */
   @FunctionalInterface
   public interface AggHandler {
@@ -1290,6 +1352,26 @@ public class PPLFuncImpTable {
               false));
 
       registerOperator(ARRAY, PPLBuiltinOperators.ARRAY);
+      registerOperator(BuiltinFunctionName.INTERNAL_ARRAY_ANY_COMPARE, ARRAY_ANY_COMPARE_OP);
+      registerOperator(BuiltinFunctionName.INTERNAL_ARRAY_ANY_BETWEEN, ARRAY_ANY_BETWEEN_OP);
+      registerOperator(BuiltinFunctionName.INTERNAL_ARRAY_MAP_STRING, ARRAY_MAP_STRING_OP);
+      registerOperator(BuiltinFunctionName.INTERNAL_ARRAY_MAP_INTEGER, ARRAY_MAP_INTEGER_OP);
+      registerOperator(BuiltinFunctionName.INTERNAL_ARRAY_NULLIF, ARRAY_NULLIF_OP);
+      registerOperator(BuiltinFunctionName.INTERNAL_ARRAY_COALESCE, ARRAY_COALESCE_OP);
+      register(
+          BuiltinFunctionName.ARRAY_CONTAINS,
+          (builder, args) -> {
+            RelDataType componentType = args[0].getType().getComponentType();
+            RexNode value =
+                componentType == null ? args[1] : builder.makeCast(componentType, args[1]);
+            return builder.makeCall(SqlLibraryOperators.ARRAY_CONTAINS, args[0], value);
+          },
+          wrapSqlOperandTypeChecker(
+              SqlLibraryOperators.ARRAY_CONTAINS.getOperandTypeChecker(),
+              BuiltinFunctionName.ARRAY_CONTAINS.name(),
+              false));
+      registerOperator(BuiltinFunctionName.ARRAY_JOIN, SqlLibraryOperators.ARRAY_JOIN);
+      registerOperator(BuiltinFunctionName.CARDINALITY, SqlLibraryOperators.ARRAY_LENGTH);
       registerOperator(MVAPPEND, PPLBuiltinOperators.MVAPPEND);
       registerOperator(MVDEDUP, SqlLibraryOperators.ARRAY_DISTINCT);
       registerOperator(MVFIND, PPLBuiltinOperators.MVFIND);

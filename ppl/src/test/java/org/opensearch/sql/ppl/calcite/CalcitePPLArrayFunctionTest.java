@@ -662,4 +662,251 @@ public class CalcitePPLArrayFunctionTest extends CalcitePPLAbstractTest {
             + "LIMIT 1";
     verifyPPLToSparkSQL(root, expectedSparkSql);
   }
+
+  @Test
+  public void testArrayScalarEqualityUsesMembership() {
+    String ppl =
+        "source=EMP | eval tags=array('prod', 'blue') | where tags = 'prod' | head 1 |"
+            + " fields tags";
+    RelNode root = getRelNode(ppl);
+
+    org.junit.Assert.assertTrue(
+        org.apache.calcite.plan.RelOptUtil.toString(root).contains("ARRAY_CONTAINS"));
+    verifyResult(root, "tags=[prod, blue]\n");
+  }
+
+  @Test
+  public void testScalarArrayEqualityUsesMembership() {
+    String ppl =
+        "source=EMP | eval tags=array('prod', 'blue') | where 'blue' = tags | head 1 |"
+            + " fields tags";
+    RelNode root = getRelNode(ppl);
+
+    org.junit.Assert.assertTrue(
+        org.apache.calcite.plan.RelOptUtil.toString(root).contains("ARRAY_CONTAINS"));
+    verifyResult(root, "tags=[prod, blue]\n");
+  }
+
+  @Test
+  public void testArrayInUsesMembership() {
+    String ppl =
+        "source=EMP | eval tags=array('prod', 'blue') | where tags in ('missing', 'blue') |"
+            + " head 1 | fields tags";
+    RelNode root = getRelNode(ppl);
+
+    String plan = org.apache.calcite.plan.RelOptUtil.toString(root);
+    org.junit.Assert.assertTrue(plan.contains("ARRAY_CONTAINS"));
+    org.junit.Assert.assertTrue(plan.contains("OR"));
+    verifyResult(root, "tags=[prod, blue]\n");
+  }
+
+  @Test
+  public void testArrayNotInUsesNegatedMembership() {
+    String ppl =
+        "source=EMP | eval tags=array('prod', 'blue') | where tags not in ('missing') |"
+            + " head 1 | fields tags";
+    RelNode root = getRelNode(ppl);
+
+    String plan = org.apache.calcite.plan.RelOptUtil.toString(root);
+    org.junit.Assert.assertTrue(plan.contains("ARRAY_CONTAINS"));
+    org.junit.Assert.assertTrue(plan.contains("NOT"));
+    verifyResult(root, "tags=[prod, blue]\n");
+  }
+
+  @Test
+  public void testArrayEqualityInsideIfUsesMembership() {
+    String ppl =
+        "source=EMP | eval tags=array('prod', 'blue'), matched=if(tags = 'prod', 'yes', 'no') |"
+            + " head 1 | fields matched";
+    RelNode root = getRelNode(ppl);
+
+    org.junit.Assert.assertTrue(
+        org.apache.calcite.plan.RelOptUtil.toString(root).contains("ARRAY_CONTAINS"));
+    verifyResult(root, "matched=yes\n");
+  }
+
+  @Test
+  public void testArrayNotEqualUsesNoElementSemantics() {
+    String ppl =
+        "source=EMP | eval tags=array('prod', 'blue') | where tags != 'missing' | head 1 |"
+            + " fields tags";
+    RelNode root = getRelNode(ppl);
+
+    String plan = org.apache.calcite.plan.RelOptUtil.toString(root);
+    org.junit.Assert.assertTrue(plan.contains("ARRAY_CONTAINS"));
+    org.junit.Assert.assertTrue(plan.contains("NOT"));
+    verifyResult(root, "tags=[prod, blue]\n");
+  }
+
+  @Test
+  public void testArrayGreaterThanUsesAnyElementSemantics() {
+    String ppl =
+        "source=EMP | eval tags=array('prod', 'blue') | where tags > 'orange' | head 1 |"
+            + " fields tags";
+    RelNode root = getRelNode(ppl);
+
+    org.junit.Assert.assertTrue(
+        org.apache.calcite.plan.RelOptUtil.toString(root).contains("array_any_compare"));
+  }
+
+  @Test
+  public void testScalarLessThanArrayUsesAnyElementSemantics() {
+    String ppl =
+        "source=EMP | eval tags=array('prod', 'blue') | where 'orange' < tags | head 1 |"
+            + " fields tags";
+    RelNode root = getRelNode(ppl);
+
+    org.junit.Assert.assertTrue(
+        org.apache.calcite.plan.RelOptUtil.toString(root).contains("array_any_compare"));
+  }
+
+  @Test
+  public void testArrayBetweenUsesAnyElementSemantics() {
+    String ppl =
+        "source=EMP | eval tags=array('prod', 'blue') | where tags between 'a' and 'c' |"
+            + " head 1 | fields tags";
+    RelNode root = getRelNode(ppl);
+
+    org.junit.Assert.assertTrue(
+        org.apache.calcite.plan.RelOptUtil.toString(root).contains("array_any_between"));
+  }
+
+  @Test
+  public void testArrayLikeUsesAnyElementSemantics() {
+    String ppl =
+        "source=EMP | eval tags=array('prod', 'blue') | where like(tags, 'pro%') | head 1 |"
+            + " fields tags";
+    RelNode root = getRelNode(ppl);
+
+    org.junit.Assert.assertTrue(
+        org.apache.calcite.plan.RelOptUtil.toString(root).contains("array_any_compare"));
+  }
+
+  // ==================== Element-wise ARRAY expression semantics ====================
+
+  @Test
+  public void testUpperOnArrayReturnsStringArray() {
+    String ppl =
+        "source=EMP | eval tags=array('prod', 'blue'), up=upper(tags) | head 1 | fields up";
+    RelNode root = getRelNode(ppl);
+
+    org.junit.Assert.assertTrue(
+        org.apache.calcite.plan.RelOptUtil.toString(root).contains("array_map_string"));
+  }
+
+  @Test
+  public void testLowerOnArrayReturnsStringArray() {
+    String ppl =
+        "source=EMP | eval tags=array('PROD', 'BLUE'), lo=lower(tags) | head 1 | fields lo";
+    RelNode root = getRelNode(ppl);
+
+    org.junit.Assert.assertTrue(
+        org.apache.calcite.plan.RelOptUtil.toString(root).contains("array_map_string"));
+  }
+
+  @Test
+  public void testTrimVariantsOnArrayReturnStringArray() {
+    for (String func : new String[] {"trim", "ltrim", "rtrim"}) {
+      String ppl =
+          "source=EMP | eval tags=array('  a  ', '  b  '), t="
+              + func
+              + "(tags) | head 1 | fields t";
+      RelNode root = getRelNode(ppl);
+      org.junit.Assert.assertTrue(
+          "expected array_map_string for " + func,
+          org.apache.calcite.plan.RelOptUtil.toString(root).contains("array_map_string"));
+    }
+  }
+
+  @Test
+  public void testSubstringOnArrayReturnsStringArray() {
+    String ppl =
+        "source=EMP | eval tags=array('prod', 'blue'), s=substring(tags, 1, 2) | head 1 | fields s";
+    RelNode root = getRelNode(ppl);
+
+    org.junit.Assert.assertTrue(
+        org.apache.calcite.plan.RelOptUtil.toString(root).contains("array_map_string"));
+  }
+
+  @Test
+  public void testReplaceOnArrayReturnsStringArray() {
+    String ppl =
+        "source=EMP | eval tags=array('prod', 'blue'), r=replace(tags, 'o', '0') | head 1 |"
+            + " fields r";
+    RelNode root = getRelNode(ppl);
+
+    org.junit.Assert.assertTrue(
+        org.apache.calcite.plan.RelOptUtil.toString(root).contains("array_map_string"));
+  }
+
+  @Test
+  public void testReverseOnArrayReturnsStringArray() {
+    String ppl =
+        "source=EMP | eval tags=array('prod', 'blue'), rv=reverse(tags) | head 1 | fields rv";
+    RelNode root = getRelNode(ppl);
+
+    org.junit.Assert.assertTrue(
+        org.apache.calcite.plan.RelOptUtil.toString(root).contains("array_map_string"));
+  }
+
+  @Test
+  public void testLengthOnArrayReturnsIntegerArray() {
+    String ppl = "source=EMP | eval tags=array('prod', 'blue'), l=length(tags) | head 1 | fields l";
+    RelNode root = getRelNode(ppl);
+
+    org.junit.Assert.assertTrue(
+        org.apache.calcite.plan.RelOptUtil.toString(root).contains("array_map_integer"));
+  }
+
+  @Test
+  public void testAsciiOnArrayReturnsIntegerArray() {
+    String ppl = "source=EMP | eval tags=array('prod', 'blue'), a=ascii(tags) | head 1 | fields a";
+    RelNode root = getRelNode(ppl);
+
+    org.junit.Assert.assertTrue(
+        org.apache.calcite.plan.RelOptUtil.toString(root).contains("array_map_integer"));
+  }
+
+  @Test
+  public void testPositionAndLocateOnArrayReturnIntegerArrays() {
+    for (String expression : new String[] {"position('o' IN tags)", "locate('o', tags)"}) {
+      String ppl =
+          "source=EMP | eval tags=array('prod', 'blue'), p=" + expression + " | head 1 | fields p";
+      RelNode root = getRelNode(ppl);
+      org.junit.Assert.assertTrue(
+          "expected array_map_integer for " + expression,
+          org.apache.calcite.plan.RelOptUtil.toString(root).contains("array_map_integer"));
+    }
+  }
+
+  @Test
+  public void testNullifOnArrayReplacesMatchingElements() {
+    String ppl =
+        "source=EMP | eval tags=array('prod', 'blue'), n=nullif(tags, 'prod') | head 1 | fields n";
+    RelNode root = getRelNode(ppl);
+
+    org.junit.Assert.assertTrue(
+        org.apache.calcite.plan.RelOptUtil.toString(root).contains("array_nullif"));
+  }
+
+  @Test
+  public void testCoalesceOnArrayUsesArrayCoalesce() {
+    String ppl =
+        "source=EMP | eval tags=array('prod', 'blue'), c=coalesce(tags, 'fallback') | head 1 |"
+            + " fields c";
+    RelNode root = getRelNode(ppl);
+
+    org.junit.Assert.assertTrue(
+        org.apache.calcite.plan.RelOptUtil.toString(root).contains("array_coalesce"));
+  }
+
+  @Test
+  public void testScalarStringFunctionUnaffectedByElementWiseRewrite() {
+    String ppl = "source=EMP | eval up=upper(ENAME) | head 1 | fields up";
+    RelNode root = getRelNode(ppl);
+
+    String plan = org.apache.calcite.plan.RelOptUtil.toString(root);
+    org.junit.Assert.assertFalse(plan.contains("array_map_string"));
+    org.junit.Assert.assertFalse(plan.contains("array_map_integer"));
+  }
 }

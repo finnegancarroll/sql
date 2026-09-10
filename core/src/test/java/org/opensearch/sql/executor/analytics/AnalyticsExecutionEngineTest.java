@@ -187,6 +187,24 @@ class AnalyticsExecutionEngineTest {
         ExprCoreType.INTEGER, response.getSchema().getColumns().get(1).getExprType(), dump);
   }
 
+  @Test
+  void executeRelNode_arrayPlannedColumnWithScalarRuntimeValueUsesScalarSchema() {
+    SqlTypeFactoryImpl typeFactory = new SqlTypeFactoryImpl(RelDataTypeSystem.DEFAULT);
+    RelDataType stringArray =
+        typeFactory.createArrayType(typeFactory.createSqlType(SqlTypeName.VARCHAR), -1);
+    RelNode relNode = mockRelNodeWithType("tags", stringArray);
+    stubExecutorWith(relNode, Collections.singletonList(new Object[] {"blue"}));
+
+    QueryResponse response = executeAndCapture(relNode);
+    String dump = dumpResponse(response);
+
+    assertEquals(
+        ExprCoreType.STRING,
+        response.getSchema().getColumns().getFirst().getExprType(),
+        "LIST reduction/expansion returns scalar cells and must advertise the element type. "
+            + dump);
+  }
+
   /** ANY column with no rows to derive from stays UNDEFINED (mirrors the Calcite path fallback). */
   @Test
   void executeRelNode_anyColumnEmptyResultsStaysUndefined() {
@@ -323,6 +341,10 @@ class AnalyticsExecutionEngineTest {
     QueryResponse response = executeAndCapture(relNode);
     String dump = dumpResponse(response);
 
+    assertEquals(
+        ExprCoreType.ARRAY,
+        response.getSchema().getColumns().getFirst().getExprType(),
+        "A genuine ARRAY runtime value must retain its ARRAY schema label. " + dump);
     java.util.List<String> result =
         response.getResults().get(0).tupleValue().get("time_list").collectionValue().stream()
             .map(org.opensearch.sql.data.model.ExprValue::stringValue)
