@@ -56,11 +56,13 @@ public class CalciteMultiValueKeywordOperatorIT extends PPLIntegTestCase {
     health.addParameter("timeout", "30s");
     client().performRequest(health);
 
-    // Scalar generation, flush, then array generations → hybrid shard, field promoted to multi_value.
-    bulk("{\"index\":{}}\n{\"id\":\"d1\",\"tags\":\"prod\"}\n{\"index\":{}}\n{\"id\":\"d2\",\"tags\":\"blue\"}\n");
-    client().performRequest(new Request("POST", "/" + INDEX + "/_flush?force=true"));
+    // Explicit multi_value mapping (declared at creation): all documents supply ARRAYS from the
+    // start, so every parquet file stores `tags` as LIST<keyword>. No dynamic promotion, no hybrid
+    // scalar+LIST shard. Single-value docs are indexed as single-element arrays.
     bulk(
-        "{\"index\":{}}\n{\"id\":\"d3\",\"tags\":[\"prod\",\"blue\"]}\n"
+        "{\"index\":{}}\n{\"id\":\"d1\",\"tags\":[\"prod\"]}\n"
+            + "{\"index\":{}}\n{\"id\":\"d2\",\"tags\":[\"blue\"]}\n"
+            + "{\"index\":{}}\n{\"id\":\"d3\",\"tags\":[\"prod\",\"blue\"]}\n"
             + "{\"index\":{}}\n{\"id\":\"d4\",\"tags\":[\"green\",\"prod\",\"green\"]}\n");
     client().performRequest(new Request("POST", "/" + INDEX + "/_flush?force=true"));
   }
