@@ -43,7 +43,7 @@ public class CalciteMultiValueKeywordOperatorIT extends PPLIntegTestCase {
     } catch (Exception ignored) {
     }
     String mapping =
-        "{\"settings\":{\"number_of_shards\":1,\"number_of_replicas\":0},"
+        "{\"settings\":{\"number_of_shards\":1,\"number_of_replicas\":0,\"index.pluggable.dataformat.enabled\":true,\"index.pluggable.dataformat\":\"composite\",\"index.composite.primary_data_format\":\"parquet\",\"index.composite.secondary_data_formats\":[\"lucene\"]},"
             + "\"mappings\":{\"properties\":{"
             + "\"id\":{\"type\":\"keyword\"},"
             + "\"tags\":{\"type\":\"keyword\",\"multi_value\":true}}}}";
