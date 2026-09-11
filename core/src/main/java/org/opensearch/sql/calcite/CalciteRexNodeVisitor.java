@@ -248,10 +248,7 @@ public class CalciteRexNodeVisitor extends AbstractNodeVisitor<RexNode, CalciteP
     // PPL `=` comparisons, the same temporal-aware comparison path visitCompare takes for `=`, so
     // each value is coerced to the field's timestamp domain before comparison.
     ExprType fieldExprType = OpenSearchTypeFactory.convertRelDataTypeToExprType(field.getType());
-    if (isArray(field) && valueList.stream().noneMatch(this::isArray)) {
-      return context.relBuilder.or(
-          valueList.stream().map(value -> makeArrayContains(field, value, context)).toList());
-    }
+    // EXPLICIT-ONLY: implicit IN-on-array rewrite removed; use explicit ARRAY_CONTAINS.
     if (TEMPORAL_TYPES.contains(fieldExprType)) {
       List<RexNode> equalities =
           valueList.stream()
@@ -315,47 +312,14 @@ public class CalciteRexNodeVisitor extends AbstractNodeVisitor<RexNode, CalciteP
 
   private @Nullable RexNode rewriteArrayScalarComparison(
       String operator, RexNode left, RexNode right, CalcitePlanContext context) {
-    if (isArray(left) == isArray(right)) {
-      return null;
-    }
-    RexNode array = isArray(left) ? left : right;
-    RexNode scalar = castToArrayElementType(array, isArray(left) ? right : left, context);
-    if ("=".equals(operator)) {
-      return makeArrayContains(array, scalar, context);
-    }
-    if ("!=".equals(operator) || "<>".equals(operator)) {
-      return context.relBuilder.not(makeArrayContains(array, scalar, context));
-    }
-    return PPLFuncImpTable.INSTANCE.resolve(
-        context.rexBuilder,
-        BuiltinFunctionName.INTERNAL_ARRAY_ANY_COMPARE,
-        array,
-        scalar,
-        context.rexBuilder.makeLiteral(
-            arrayComparisonMode(isArray(left) ? operator : reverseComparison(operator))));
+    // EXPLICIT-ONLY: implicit array rewrite removed; scalar ops on ARRAY are rejected.
+    return null;
   }
 
   private @Nullable RexNode rewriteArrayPatternFunction(
       String functionName, List<RexNode> arguments, CalcitePlanContext context) {
-    if (arguments.size() != 2 || !isArray(arguments.get(0))) {
-      return null;
-    }
-    BuiltinFunctionName function = BuiltinFunctionName.of(functionName).orElse(null);
-    if (function != BuiltinFunctionName.LIKE && function != BuiltinFunctionName.REGEXP) {
-      return null;
-    }
-    RexNode array = arguments.get(0);
-    RexNode pattern = castToArrayElementType(array, arguments.get(1), context);
-    String operation =
-        function == BuiltinFunctionName.REGEXP
-            ? "regex"
-            : (CalcitePlanContext.isLegacyPreferred() ? "ilike" : "like");
-    return PPLFuncImpTable.INSTANCE.resolve(
-        context.rexBuilder,
-        BuiltinFunctionName.INTERNAL_ARRAY_ANY_COMPARE,
-        array,
-        pattern,
-        context.rexBuilder.makeLiteral(operation));
+    // EXPLICIT-ONLY: implicit array rewrite removed; scalar ops on ARRAY are rejected.
+    return null;
   }
 
   // ==================== Element-wise ARRAY expression helpers ====================
@@ -387,41 +351,8 @@ public class CalciteRexNodeVisitor extends AbstractNodeVisitor<RexNode, CalciteP
    */
   private @Nullable RexNode rewriteArrayElementWiseFunction(
       String functionName, List<RexNode> arguments, CalcitePlanContext context) {
-    if (arguments.isEmpty()) {
-      return null;
-    }
-    String lower = functionName.toLowerCase(Locale.ROOT);
-    RexNode array;
-    List<RexNode> extraArguments;
-    final BuiltinFunctionName target;
-    if (ARRAY_MAP_STRING_FUNCTIONS.contains(lower) && isArray(arguments.get(0))) {
-      array = arguments.get(0);
-      extraArguments = arguments.subList(1, arguments.size());
-      target = BuiltinFunctionName.INTERNAL_ARRAY_MAP_STRING;
-    } else if (ARRAY_MAP_INTEGER_FUNCTIONS.contains(lower) && isArray(arguments.get(0))) {
-      array = arguments.get(0);
-      extraArguments = arguments.subList(1, arguments.size());
-      target = BuiltinFunctionName.INTERNAL_ARRAY_MAP_INTEGER;
-    } else if (("position".equals(lower) || "locate".equals(lower))
-        && arguments.size() >= 2
-        && !isArray(arguments.get(0))
-        && isArray(arguments.get(1))) {
-      // SQL POSITION(needle IN haystack) and LOCATE(needle, haystack[, start]) place the ARRAY
-      // haystack second. Native mapping always receives array, function name, needle, [start].
-      array = arguments.get(1);
-      extraArguments = new ArrayList<>();
-      extraArguments.add(arguments.get(0));
-      extraArguments.addAll(arguments.subList(2, arguments.size()));
-      target = BuiltinFunctionName.INTERNAL_ARRAY_MAP_INTEGER;
-    } else {
-      return null;
-    }
-    List<RexNode> operands = new ArrayList<>();
-    operands.add(array);
-    operands.add(context.rexBuilder.makeLiteral(lower));
-    operands.addAll(extraArguments);
-    return PPLFuncImpTable.INSTANCE.resolve(
-        context.rexBuilder, target, operands.toArray(new RexNode[0]));
+    // EXPLICIT-ONLY: implicit array rewrite removed; scalar ops on ARRAY are rejected.
+    return null;
   }
 
   /**
@@ -432,23 +363,7 @@ public class CalciteRexNodeVisitor extends AbstractNodeVisitor<RexNode, CalciteP
    */
   private @Nullable RexNode rewriteArrayConditionalFunction(
       String functionName, List<RexNode> arguments, CalcitePlanContext context) {
-    if (arguments.size() != 2) {
-      return null;
-    }
-    boolean firstIsArray = isArray(arguments.get(0));
-    if ("nullif".equalsIgnoreCase(functionName) && firstIsArray && !isArray(arguments.get(1))) {
-      RexNode scalar = castToArrayElementType(arguments.get(0), arguments.get(1), context);
-      return PPLFuncImpTable.INSTANCE.resolve(
-          context.rexBuilder, BuiltinFunctionName.INTERNAL_ARRAY_NULLIF, arguments.get(0), scalar);
-    }
-    if ("coalesce".equalsIgnoreCase(functionName) && firstIsArray && !isArray(arguments.get(1))) {
-      RexNode scalar = castToArrayElementType(arguments.get(0), arguments.get(1), context);
-      return PPLFuncImpTable.INSTANCE.resolve(
-          context.rexBuilder,
-          BuiltinFunctionName.INTERNAL_ARRAY_COALESCE,
-          arguments.get(0),
-          scalar);
-    }
+    // EXPLICIT-ONLY: implicit array rewrite removed; scalar ops on ARRAY are rejected.
     return null;
   }
 
