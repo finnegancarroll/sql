@@ -17,6 +17,8 @@ import static org.opensearch.sql.expression.function.BuiltinFunctionName.REGEXP;
 import static org.opensearch.sql.sql.antlr.parser.OpenSearchSQLParser.AltMultiFieldRelevanceFunctionContext;
 import static org.opensearch.sql.sql.antlr.parser.OpenSearchSQLParser.AltSingleFieldRelevanceFunctionContext;
 import static org.opensearch.sql.sql.antlr.parser.OpenSearchSQLParser.AlternateMultiMatchFieldContext;
+import static org.opensearch.sql.sql.antlr.parser.OpenSearchSQLParser.ArrayLiteralExpressionAtomContext;
+import static org.opensearch.sql.sql.antlr.parser.OpenSearchSQLParser.ArraySubscriptExpressionAtomContext;
 import static org.opensearch.sql.sql.antlr.parser.OpenSearchSQLParser.BetweenPredicateContext;
 import static org.opensearch.sql.sql.antlr.parser.OpenSearchSQLParser.BinaryComparisonPredicateContext;
 import static org.opensearch.sql.sql.antlr.parser.OpenSearchSQLParser.BooleanContext;
@@ -154,6 +156,24 @@ public class AstExpressionBuilder extends OpenSearchSQLParserBaseVisitor<Unresol
   @Override
   public UnresolvedExpression visitNestedExpressionAtom(NestedExpressionAtomContext ctx) {
     return visit(ctx.expression()); // Discard parenthesis around
+  }
+
+  @Override
+  public UnresolvedExpression visitArrayLiteralExpressionAtom(
+      ArrayLiteralExpressionAtomContext ctx) {
+    List<UnresolvedExpression> elements =
+        ctx.expressions() == null
+            ? Collections.emptyList()
+            : ctx.expressions().expression().stream().map(this::visit).collect(Collectors.toList());
+    return new Function(BuiltinFunctionName.ARRAY.getName().getFunctionName(), elements);
+  }
+
+  @Override
+  public UnresolvedExpression visitArraySubscriptExpressionAtom(
+      ArraySubscriptExpressionAtomContext ctx) {
+    return new Function(
+        BuiltinFunctionName.INTERNAL_ITEM.getName().getFunctionName(),
+        Arrays.asList(visit(ctx.array), visit(ctx.index)));
   }
 
   @Override

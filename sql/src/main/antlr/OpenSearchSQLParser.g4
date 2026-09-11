@@ -332,10 +332,12 @@ expressions
 
 expressionAtom
    : constant                                                                               # constantExpressionAtom
+   | ARRAY LT_SQR_PRTHS expressions? RT_SQR_PRTHS                                           # arrayLiteralExpressionAtom
    | columnName                                                                             # fullColumnNameExpressionAtom
    | functionCall                                                                           # functionCallExpressionAtom
    | LR_BRACKET expression RR_BRACKET                                                       # nestedExpressionAtom
    | EXISTS LR_BRACKET querySpecification RR_BRACKET                                        # existsSubqueryExpressionAtom
+   | array = expressionAtom LT_SQR_PRTHS index = expression RT_SQR_PRTHS                    # arraySubscriptExpressionAtom
    | left = expressionAtom mathOperator = (STAR | SLASH | MODULE) right = expressionAtom    # mathExpressionAtom
    | left = expressionAtom mathOperator = (PLUS | MINUS) right = expressionAtom             # mathExpressionAtom
    ;
@@ -453,9 +455,18 @@ scalarFunctionName
    : mathematicalFunctionName
    | dateTimeFunctionName
    | textFunctionName
+   | collectionFunctionName
    | flowControlFunctionName
    | systemFunctionName
    | nestedFunctionName
+   ;
+
+collectionFunctionName
+   : ARRAY
+   | ARRAY_CONTAINS
+   | ARRAY_JOIN
+   | ARRAY_LENGTH
+   | CARDINALITY
    ;
 
 bucketFunctionName
@@ -690,7 +701,8 @@ textFunctionName
    ;
 
 flowControlFunctionName
-   : IF
+   : COALESCE
+   | IF
    | IFNULL
    | NULLIF
    | ISNULL

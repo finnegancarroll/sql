@@ -720,6 +720,17 @@ class SQLSyntaxParserTest {
   }
 
   @Test
+  public void canParseArrayFunctions() {
+    assertNotNull(parser.parse("SELECT ARRAY_CONTAINS(tags, 'prod') FROM logs"));
+    assertNotNull(parser.parse("SELECT ARRAY_JOIN(tags, ',') FROM logs"));
+    assertNotNull(parser.parse("SELECT ARRAY_LENGTH(tags) FROM logs"));
+    assertNotNull(parser.parse("SELECT CARDINALITY(tags) FROM logs"));
+    assertNotNull(parser.parse("SELECT COALESCE(tags, 'none') FROM logs"));
+    assertNotNull(parser.parse("SELECT ARRAY['prod', 'blue'] FROM logs"));
+    assertNotNull(parser.parse("SELECT tags[1] FROM logs"));
+  }
+
+  @Test
   public void canParseIfFunction() {
     assertNotNull(parser.parse("SELECT IF(1 > 2, 1, 0)"));
     assertNotNull(parser.parse("SELECT IF(1 < 2, 1, 0)"));

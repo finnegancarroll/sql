@@ -285,19 +285,29 @@ public class AnalyticsExecutionEngine implements ExecutionEngine {
     List<Schema.Column> columns = new ArrayList<>();
     for (RelDataTypeField field : fields) {
       ExprType exprType = convertType(field.getType());
-      // A column whose planned type is ANY (e.g. the SCALAR_MAX/SCALAR_MIN UDFs declare ANY since
-      // they accept mixed numeric/string operands) maps to UNDEFINED. Recover the concrete type
-      // from the first row's runtime value, mirroring OpenSearchExecutionEngine.buildResultSet on
-      // the Calcite path so both routes report the same schema type.
-      if (exprType == ExprCoreType.UNDEFINED && !results.isEmpty()) {
-        ExprValue cell = results.getFirst().tupleValue().get(field.getName());
-        if (cell != null && !cell.isNull() && !cell.isMissing()) {
-          exprType = cell.type();
+      // Backend rewrites can intentionally change a planned shape: LIST MIN/MAX and implicit LIST
+      // GROUP BY expansion produce scalar cells even though the frontend RelNode still declares
+      // ARRAY. ANY-returning functions likewise need their concrete runtime type recovered.
+      if (exprType == ExprCoreType.UNDEFINED || exprType == ExprCoreType.ARRAY) {
+        ExprType runtimeType = firstConcreteRuntimeType(field.getName(), results);
+        if (runtimeType != null
+            && (exprType == ExprCoreType.UNDEFINED || runtimeType != ExprCoreType.ARRAY)) {
+          exprType = runtimeType;
         }
       }
       columns.add(new Schema.Column(field.getName(), null, exprType));
     }
     return new Schema(columns);
+  }
+
+  private static ExprType firstConcreteRuntimeType(String fieldName, List<ExprValue> results) {
+    for (ExprValue result : results) {
+      ExprValue cell = result.tupleValue().get(fieldName);
+      if (cell != null && !cell.isNull() && !cell.isMissing()) {
+        return cell.type();
+      }
+    }
+    return null;
   }
 
   private ExprType convertType(RelDataType type) {

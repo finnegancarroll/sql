@@ -337,6 +337,15 @@ public class SelectResultSet extends ResultSet {
     switch (field.getName().toLowerCase()) {
       case "count":
         return Schema.Type.LONG;
+      case "array_length":
+      case "cardinality":
+        return Schema.Type.INTEGER;
+      case "array_contains":
+        return Schema.Type.BOOLEAN;
+      case "array_join":
+      case "mvjoin":
+      case "coalesce":
+        return Schema.Type.TEXT;
       case "sum":
       case "avg":
       case "min":

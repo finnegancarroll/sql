@@ -103,6 +103,7 @@ thirdPartyAudit.enabled = false
 configurations.all {
     // conflict with spring-jcl
     resolutionStrategy.force "commons-logging:commons-logging:${commons_logging_version}"
+    resolutionStrategy.force "org.snakeyaml:snakeyaml-engine:3.1.1"
     // enforce 2.12.6, https://github.com/opensearch-project/sql/issues/424
     resolutionStrategy.force "com.fasterxml.jackson.core:jackson-core:${versions.jackson}"
     resolutionStrategy.force "commons-codec:commons-codec:${commons_codec_version}"

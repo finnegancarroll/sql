@@ -181,6 +181,7 @@ loggerUsageCheck.enabled = false
 
 configurations.all {
     resolutionStrategy.force 'junit:junit:4.13.2'
+    resolutionStrategy.force "org.snakeyaml:snakeyaml-engine:3.1.1"
     resolutionStrategy.force "commons-logging:commons-logging:${commons_logging_version}"
     // enforce 1.1.3, https://www.whitesourcesoftware.com/vulnerability-database/WS-2019-0379
     resolutionStrategy.force "commons-codec:commons-codec:${commons_codec_version}"
@@ -1522,4 +1523,44 @@ task integTestRemote(type: RestIntegTestTask) {
     // externally provided cluster, so these suites cannot pass here. integTest still covers them.
     exclude 'org/opensearch/sql/datasource/DataSourceAPIsIT.class'
     exclude 'org/opensearch/sql/datasource/DataSourceEnabledIT.class'
+}
+
+
+// ── Multi-value explicit-operator IT: runs CalciteMultiValueKeywordOperatorIT against the full
+// analytics-engine stack (composite + parquet + datafusion), so array operators execute on the AE
+// path rather than the sql plugin's Lucene pushdown. Pass -PnativeLibPath=/abs/release/ for DataFusion.
+task analyticsEngineMultiValueIT(type: RestIntegTestTask) {
+    dependsOn downloadAnalyticsEngineZip, downloadArrowFlightRpcZip, downloadArrowBaseZip, downloadAnalyticsBackendLuceneZip, downloadParquetDataFormatZip, downloadCompositeEngineZip, downloadAnalyticsBackendDatafusionZip
+    dependsOn ':opensearch-sql-plugin:bundlePlugin'
+    systemProperty 'tests.security.manager', 'false'
+    filter {
+        includeTestsMatching 'org.opensearch.sql.calcite.remote.CalciteMultiValueKeywordOperatorIT'
+    }
+}
+
+testClusters.analyticsEngineMultiValueIT {
+    testDistribution = 'archive'
+    plugin(getJobSchedulerPlugin())
+    plugin(getArrowBasePlugin())
+    plugin(getArrowFlightRpcPlugin())
+    plugin(getCompositeEnginePlugin())
+    plugin(getAnalyticsEnginePlugin())
+    plugin(getAnalyticsBackendLucenePlugin())
+    plugin(getAnalyticsBackendDatafusionPlugin())
+    plugin(getParquetDataFormatPlugin())
+    plugin ":opensearch-sql-plugin"
+    jvmArgs '--add-opens=java.base/java.nio=ALL-UNNAMED'
+    jvmArgs '--enable-native-access=ALL-UNNAMED'
+    systemProperty 'io.netty.allocator.numDirectArenas', '1'
+    systemProperty 'io.netty.noUnsafe', 'false'
+    systemProperty 'io.netty.tryUnsafe', 'true'
+    systemProperty 'io.netty.tryReflectionSetAccessible', 'true'
+    systemProperty 'opensearch.experimental.feature.pluggable.dataformat.enabled', 'true'
+    systemProperty 'opensearch.experimental.feature.transport.stream.enabled', 'true'
+    setting 'cluster.pluggable.dataformat', 'composite'
+    setting 'cluster.composite.primary_data_format', 'parquet'
+    setting 'cluster.composite.secondary_data_formats', '["lucene"]'
+    if (project.findProperty('nativeLibPath')) {
+        systemProperty 'java.library.path', project.findProperty('nativeLibPath')
+    }
 }

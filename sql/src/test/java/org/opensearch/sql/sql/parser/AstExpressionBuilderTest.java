@@ -64,6 +64,14 @@ class AstExpressionBuilderTest {
   private final AstExpressionBuilder astExprBuilder = new AstExpressionBuilder();
 
   @Test
+  public void canBuildArrayLiteralAndSubscript() {
+    assertEquals(
+        function("array", stringLiteral("prod"), stringLiteral("blue")),
+        buildExprAst("ARRAY['prod', 'blue']"));
+    assertEquals(function("item", qualifiedName("tags"), intLiteral(1)), buildExprAst("tags[1]"));
+  }
+
+  @Test
   public void canBuildStringLiteral() {
     assertEquals(stringLiteral("hello"), buildExprAst("'hello'"));
     assertEquals(stringLiteral("hello"), buildExprAst("\"hello\""));
