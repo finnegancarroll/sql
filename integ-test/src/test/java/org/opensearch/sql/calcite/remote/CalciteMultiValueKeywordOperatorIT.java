@@ -5,10 +5,14 @@
 
 package org.opensearch.sql.calcite.remote;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
+import static org.opensearch.sql.util.MatcherUtils.rows;
+import static org.opensearch.sql.util.MatcherUtils.schema;
+import static org.opensearch.sql.util.MatcherUtils.verifyDataRows;
+import static org.opensearch.sql.util.MatcherUtils.verifyDataRowsInOrder;
+import static org.opensearch.sql.util.MatcherUtils.verifySchema;
 
 import java.io.IOException;
+import java.util.List;
 import org.json.JSONObject;
 import org.junit.jupiter.api.Test;
 import org.opensearch.client.Request;
@@ -16,15 +20,18 @@ import org.opensearch.sql.ppl.PPLIntegTestCase;
 
 /**
  * Integration tests for the EXPLICIT multi-value/array operators on a real {@code multi_value} keyword
- * field (promoted via a scalar generation followed by array generations → hybrid scalar+LIST parquet
- * shard). Complements {@code CalciteArrayFunctionIT} (inline {@code array()} literals) by exercising
- * operators against an actually-promoted field.
+ * field, executed against the analytics engine (composite/parquet). Complements
+ * {@code CalciteArrayFunctionIT} (inline {@code array()} literals) by exercising operators against an
+ * actually-declared multi_value field.
  *
- * <p>Operators are routed to their correct frontend: the {@code array_*}/{@code cardinality} family is
- * SQL-grammar only (SQL endpoint); the {@code mv*}/{@code array_length}/lambda family and the
- * {@code mvexpand} command are PPL. Implicit scalar-op-on-array behavior is NOT tested — explicit-only.
+ * <p>Operators route to their correct frontend: {@code array_*}/{@code cardinality}/subscript are SQL
+ * (SQL endpoint); {@code mv*}/{@code array_length} and the {@code mvexpand} command are PPL. Implicit
+ * scalar-op-on-array behavior is NOT tested — explicit-only.
  *
- * <p>Assertions inspect the raw JSON response (datarows/schema) so they are robust to formatting.
+ * <p>Assertions are EXACT: filters assert the precise document id set (count + identity together, so a
+ * right-count/wrong-docs result fails), and value/projection tests assert the exact returned
+ * value/array via {@code verifyDataRows} (not substring or bare-count checks) so an error response or
+ * empty/zero-doc result cannot false-pass.
  */
 public class CalciteMultiValueKeywordOperatorIT extends PPLIntegTestCase {
 
@@ -43,7 +50,11 @@ public class CalciteMultiValueKeywordOperatorIT extends PPLIntegTestCase {
     } catch (Exception ignored) {
     }
     String mapping =
-        "{\"settings\":{\"number_of_shards\":1,\"number_of_replicas\":0,\"index.pluggable.dataformat.enabled\":true,\"index.pluggable.dataformat\":\"composite\",\"index.composite.primary_data_format\":\"parquet\",\"index.composite.secondary_data_formats\":[\"lucene\"]},"
+        "{\"settings\":{\"number_of_shards\":1,\"number_of_replicas\":0,"
+            + "\"index.pluggable.dataformat.enabled\":true,"
+            + "\"index.pluggable.dataformat\":\"composite\","
+            + "\"index.composite.primary_data_format\":\"parquet\","
+            + "\"index.composite.secondary_data_formats\":[\"lucene\"]},"
             + "\"mappings\":{\"properties\":{"
             + "\"id\":{\"type\":\"keyword\"},"
             + "\"tags\":{\"type\":\"keyword\",\"multi_value\":true}}}}";
@@ -56,9 +67,11 @@ public class CalciteMultiValueKeywordOperatorIT extends PPLIntegTestCase {
     health.addParameter("timeout", "30s");
     client().performRequest(health);
 
-    // Explicit multi_value mapping (declared at creation): all documents supply ARRAYS from the
-    // start, so every parquet file stores `tags` as LIST<keyword>. No dynamic promotion, no hybrid
-    // scalar+LIST shard. Single-value docs are indexed as single-element arrays.
+    // Explicit multi_value mapping: every document supplies an ARRAY (single-element for single
+    // values), so every parquet file stores tags as LIST<keyword>. No hybrid scalar+LIST shard.
+    // Fixture:
+    //   d1 -> [prod]        d2 -> [blue]
+    //   d3 -> [prod, blue]  d4 -> [green, prod, green]
     bulk(
         "{\"index\":{}}\n{\"id\":\"d1\",\"tags\":[\"prod\"]}\n"
             + "{\"index\":{}}\n{\"id\":\"d2\",\"tags\":[\"blue\"]}\n"
@@ -74,35 +87,32 @@ public class CalciteMultiValueKeywordOperatorIT extends PPLIntegTestCase {
     client().performRequest(r);
   }
 
-  /** Runs a PPL query and returns the parsed JSON response. */
   private JSONObject ppl(String query) throws IOException {
     return executeQuery(query);
   }
 
-  /** Runs a SQL query via the JDBC-format endpoint and returns the parsed JSON response. */
   private JSONObject sql(String query) throws IOException {
     Request r = new Request("POST", "/_plugins/_sql");
     r.setJsonEntity("{\"query\":\"" + query.replace("\"", "\\\"") + "\"}");
     org.opensearch.client.Response resp = client().performRequest(r);
     return new JSONObject(
-        new String(resp.getEntity().getContent().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8));
+        new String(
+            resp.getEntity().getContent().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8));
   }
 
   // ==================== PPL: projection ====================
 
   @Test
   public void testPplProjectionArrayDoc() throws IOException {
-    JSONObject r = ppl(String.format("source=%s | where id='d3' | fields tags", INDEX));
-    // tags for d3 = ["prod","blue"]; assert the datarow carries both elements.
-    String s = r.getJSONArray("datarows").toString();
-    assertTrue(s, s.contains("prod") && s.contains("blue"));
+    JSONObject r = ppl(String.format("source=%s | where id='d3' | fields id, tags", INDEX));
+    verifySchema(r, schema("id", "string"), schema("tags", "array"));
+    verifyDataRows(r, rows("d3", List.of("prod", "blue")));
   }
 
   @Test
-  public void testPplProjectionScalarGenerationDoc() throws IOException {
-    JSONObject r = ppl(String.format("source=%s | where id='d1' | fields tags", INDEX));
-    String s = r.getJSONArray("datarows").toString();
-    assertTrue(s, s.contains("prod"));
+  public void testPplProjectionSingleValueDoc() throws IOException {
+    JSONObject r = ppl(String.format("source=%s | where id='d1' | fields id, tags", INDEX));
+    verifyDataRows(r, rows("d1", List.of("prod")));
   }
 
   // ==================== PPL: array_length ====================
@@ -110,15 +120,18 @@ public class CalciteMultiValueKeywordOperatorIT extends PPLIntegTestCase {
   @Test
   public void testPplArrayLength() throws IOException {
     JSONObject r =
-        ppl(String.format("source=%s | where id='d4' | eval n = array_length(tags) | fields n", INDEX));
-    assertEquals(3, r.getJSONArray("datarows").getJSONArray(0).getInt(0));
+        ppl(
+            String.format(
+                "source=%s | where id='d4' | eval n = array_length(tags) | fields n", INDEX));
+    verifyDataRows(r, rows(3));
   }
 
   @Test
   public void testPplArrayLengthFilterByCountUseCase() throws IOException {
     JSONObject r =
         ppl(String.format("source=%s | where array_length(tags) > 1 | sort id | fields id", INDEX));
-    assertEquals(2, r.getJSONArray("datarows").length()); // d3, d4
+    // Only multi-element docs: d3 [prod,blue], d4 [green,prod,green].
+    verifyDataRowsInOrder(r, rows("d3"), rows("d4"));
   }
 
   // ==================== PPL: mvjoin ====================
@@ -126,8 +139,10 @@ public class CalciteMultiValueKeywordOperatorIT extends PPLIntegTestCase {
   @Test
   public void testPplMvjoin() throws IOException {
     JSONObject r =
-        ppl(String.format("source=%s | where id='d3' | eval s = mvjoin(tags, '-') | fields s", INDEX));
-    assertEquals("prod-blue", r.getJSONArray("datarows").getJSONArray(0).getString(0));
+        ppl(
+            String.format(
+                "source=%s | where id='d3' | eval s = mvjoin(tags, '-') | fields s", INDEX));
+    verifyDataRows(r, rows("prod-blue"));
   }
 
   // ==================== PPL: mvindex ====================
@@ -138,7 +153,7 @@ public class CalciteMultiValueKeywordOperatorIT extends PPLIntegTestCase {
         ppl(
             String.format(
                 "source=%s | where id='d3' | eval first = mvindex(tags, 0) | fields first", INDEX));
-    assertEquals("prod", r.getJSONArray("datarows").getJSONArray(0).getString(0));
+    verifyDataRows(r, rows("prod"));
   }
 
   // ==================== PPL: mvfind (index + contains use case) ====================
@@ -149,15 +164,17 @@ public class CalciteMultiValueKeywordOperatorIT extends PPLIntegTestCase {
         ppl(
             String.format(
                 "source=%s | where id='d3' | eval idx = mvfind(tags, 'blue') | fields idx", INDEX));
-    assertEquals(1, r.getJSONArray("datarows").getJSONArray(0).getInt(0));
+    verifyDataRows(r, rows(1)); // 0-based index of 'blue' in [prod, blue]
   }
 
   @Test
   public void testPplMvfindContainsUseCase() throws IOException {
     JSONObject r =
-        ppl(String.format("source=%s | where mvfind(tags, 'blue') >= 0 | sort id | fields id", INDEX));
-    // docs containing 'blue': d2 (scalar), d3 ([prod,blue]).
-    assertEquals(2, r.getJSONArray("datarows").length());
+        ppl(
+            String.format(
+                "source=%s | where mvfind(tags, 'blue') >= 0 | sort id | fields id", INDEX));
+    // Docs whose tags contain 'blue': d2 [blue], d3 [prod,blue].
+    verifyDataRowsInOrder(r, rows("d2"), rows("d3"));
   }
 
   // ==================== PPL: mvdedup ====================
@@ -166,9 +183,8 @@ public class CalciteMultiValueKeywordOperatorIT extends PPLIntegTestCase {
   public void testPplMvdedup() throws IOException {
     JSONObject r =
         ppl(String.format("source=%s | where id='d4' | eval u = mvdedup(tags) | fields u", INDEX));
-    // d4 tags = [green, prod, green] → deduped to 2 distinct elements.
-    String s = r.getJSONArray("datarows").toString();
-    assertTrue(s, s.contains("green") && s.contains("prod"));
+    // d4 tags = [green, prod, green] -> deduped, first-occurrence order.
+    verifyDataRows(r, rows(List.of("green", "prod")));
   }
 
   // ==================== PPL: mvappend ====================
@@ -176,9 +192,10 @@ public class CalciteMultiValueKeywordOperatorIT extends PPLIntegTestCase {
   @Test
   public void testPplMvappend() throws IOException {
     JSONObject r =
-        ppl(String.format("source=%s | where id='d2' | eval a = mvappend(tags, 'extra') | fields a", INDEX));
-    String s = r.getJSONArray("datarows").toString();
-    assertTrue(s, s.contains("blue") && s.contains("extra"));
+        ppl(
+            String.format(
+                "source=%s | where id='d2' | eval a = mvappend(tags, 'extra') | fields a", INDEX));
+    verifyDataRows(r, rows(List.of("blue", "extra")));
   }
 
   // ==================== PPL: mvexpand command (+ group-by use case) ====================
@@ -189,15 +206,21 @@ public class CalciteMultiValueKeywordOperatorIT extends PPLIntegTestCase {
         ppl(
             String.format(
                 "source=%s | where id='d3' | mvexpand tags | sort tags | fields id, tags", INDEX));
-    assertEquals(2, r.getJSONArray("datarows").length()); // prod, blue
+    // d3 [prod, blue] explodes to two rows, sorted by tags: blue, prod.
+    verifyDataRowsInOrder(r, rows("d3", "blue"), rows("d3", "prod"));
   }
 
   @Test
   public void testPplMvexpandGroupByUseCase() throws IOException {
     JSONObject r =
-        ppl(String.format("source=%s | mvexpand tags | stats count() as c by tags | sort tags", INDEX));
-    // per-element counts: blue=2 (d2,d3), green=2 (d4x2 — dedup not applied by mvexpand), prod=3.
-    assertEquals(3, r.getJSONArray("datarows").length());
+        ppl(
+            String.format(
+                "source=%s | mvexpand tags | stats count() as c by tags | sort tags", INDEX));
+    // Per-element counts across all docs, sorted by tag:
+    //   blue: d2, d3            = 2
+    //   green: d4 (x2, mvexpand does not dedup) = 2
+    //   prod: d1, d3, d4        = 3
+    verifyDataRowsInOrder(r, rows(2, "blue"), rows(2, "green"), rows(3, "prod"));
   }
 
   // ==================== SQL: array_contains (explicit filter/contains) ====================
@@ -206,7 +229,7 @@ public class CalciteMultiValueKeywordOperatorIT extends PPLIntegTestCase {
   public void testSqlArrayContainsStandalone() throws IOException {
     JSONObject r =
         sql(String.format("SELECT array_contains(tags, 'prod') AS c FROM %s WHERE id='d3'", INDEX));
-    assertEquals(true, r.getJSONArray("datarows").getJSONArray(0).get(0));
+    verifyDataRows(r, rows(true));
   }
 
   @Test
@@ -215,17 +238,23 @@ public class CalciteMultiValueKeywordOperatorIT extends PPLIntegTestCase {
         sql(
             String.format(
                 "SELECT id FROM %s WHERE array_contains(tags, 'prod') ORDER BY id", INDEX));
-    // d1 (scalar prod), d3, d4 contain prod.
-    assertEquals(3, r.getJSONArray("datarows").length());
+    // Docs containing 'prod': d1 [prod], d3 [prod,blue], d4 [green,prod,green]. d2 [blue] excluded.
+    verifyDataRowsInOrder(r, rows("d1"), rows("d3"), rows("d4"));
   }
 
-  // ==================== SQL: cardinality / array_length ====================
+  @Test
+  public void testSqlArrayContainsFilterNoMatch() throws IOException {
+    JSONObject r =
+        sql(String.format("SELECT id FROM %s WHERE array_contains(tags, 'nope')", INDEX));
+    verifyDataRows(r); // no document contains 'nope'
+  }
+
+  // ==================== SQL: cardinality ====================
 
   @Test
   public void testSqlCardinality() throws IOException {
-    JSONObject r =
-        sql(String.format("SELECT cardinality(tags) AS n FROM %s WHERE id='d3'", INDEX));
-    assertEquals(2, r.getJSONArray("datarows").getJSONArray(0).getInt(0));
+    JSONObject r = sql(String.format("SELECT cardinality(tags) AS n FROM %s WHERE id='d3'", INDEX));
+    verifyDataRows(r, rows(2));
   }
 
   // ==================== SQL: array_join ====================
@@ -234,7 +263,7 @@ public class CalciteMultiValueKeywordOperatorIT extends PPLIntegTestCase {
   public void testSqlArrayJoin() throws IOException {
     JSONObject r =
         sql(String.format("SELECT array_join(tags, ',') AS s FROM %s WHERE id='d3'", INDEX));
-    assertEquals("prod,blue", r.getJSONArray("datarows").getJSONArray(0).getString(0));
+    verifyDataRows(r, rows("prod,blue"));
   }
 
   // ==================== SQL: subscript ====================
@@ -242,6 +271,6 @@ public class CalciteMultiValueKeywordOperatorIT extends PPLIntegTestCase {
   @Test
   public void testSqlSubscript() throws IOException {
     JSONObject r = sql(String.format("SELECT tags[1] AS first FROM %s WHERE id='d3'", INDEX));
-    assertEquals("prod", r.getJSONArray("datarows").getJSONArray(0).getString(0));
+    verifyDataRows(r, rows("prod")); // 1-based subscript -> first element
   }
 }
