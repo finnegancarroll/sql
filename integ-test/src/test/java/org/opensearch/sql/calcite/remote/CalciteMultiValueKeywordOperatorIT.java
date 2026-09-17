@@ -214,4 +214,39 @@ public class CalciteMultiValueKeywordOperatorIT extends PPLIntegTestCase {
     verifyDataRowsInOrder(r, rows(2, "blue"), rows(2, "green"), rows(3, "prod"));
   }
 
+
+  // ==================== PPL: mvzip ====================
+
+
+  // ==================== PPL: split (string -> array) ====================
+
+
+  // ==================== PPL: lambda predicates (exists / forall / filter) ====================
+
+
+
+
+  // ==================== PPL: mvexpand edge cases ====================
+
+  @Test
+  public void testPplMvexpandLimit() throws IOException {
+    // mvexpand ... limit=N caps elements PER DOCUMENT. d4 [green, prod, green] limit=2 -> 2 rows.
+    JSONObject r =
+        ppl(
+            String.format(
+                "source=%s | where id='d4' | mvexpand tags limit=2 | sort tags | fields id, tags",
+                INDEX));
+    // First two elements of [green, prod, green] are green, prod -> sorted: green, prod.
+    verifyDataRowsInOrder(r, rows("d4", "green"), rows("d4", "prod"));
+  }
+
+  @Test
+  public void testPplMvexpandSingleElement() throws IOException {
+    // Single-element array expands to exactly one row.
+    JSONObject r =
+        ppl(
+            String.format(
+                "source=%s | where id='d1' | mvexpand tags | fields id, tags", INDEX));
+    verifyDataRowsInOrder(r, rows("d1", "prod"));
+  }
 }

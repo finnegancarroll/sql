@@ -1537,6 +1537,7 @@ task analyticsEngineMultiValueIT(type: RestIntegTestTask) {
 
     filter {
         includeTestsMatching 'org.opensearch.sql.calcite.remote.CalciteMultiValueKeywordOperatorIT'
+        includeTestsMatching 'org.opensearch.sql.calcite.remote.CalciteMultiValueDistributedIT'
     }
 }
 
