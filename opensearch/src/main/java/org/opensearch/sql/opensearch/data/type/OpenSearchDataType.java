@@ -225,13 +225,14 @@ public class OpenSearchDataType implements ExprType, Serializable {
   }
 
   /**
-   * Builds an ARRAY-typed OpenSearchDataType wrapping the given element type. Used for {@code
-   * multi_value} fields so array operators type-check against a Calcite ARRAY.
+   * Builds an ARRAY-typed OpenSearchDataType that preserves the given element type. Used for {@code
+   * multi_value} fields (stored as a Parquet LIST column) so array operators type-check against a
+   * Calcite {@code ARRAY<T>} rather than {@code ARRAY<ANY>}. Retaining the element type lets
+   * element-sensitive operations (numeric aggregation after {@code mvexpand}, typed {@code
+   * mvindex}, comparisons) bind correctly for non-keyword scalar types.
    */
   public static OpenSearchDataType ofArray(OpenSearchDataType elementType) {
-    // ARRAY<ANY> — element type is not preserved by the current Calcite ARRAY conversion, which is
-    // sufficient for array operators to bind. elementType retained as a param for future typing.
-    return OpenSearchDataType.of(ExprCoreType.ARRAY);
+    return new OpenSearchArrayType(elementType);
   }
 
   protected OpenSearchDataType(MappingType mappingType) {

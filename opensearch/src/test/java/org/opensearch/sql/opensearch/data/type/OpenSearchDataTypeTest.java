@@ -568,4 +568,53 @@ class OpenSearchDataTypeTest {
             new OpenSearchAliasType("col1", OpenSearchDataType.of(MappingType.Invalid))),
         OpenSearchDataType.parseMapping(indexMapping2));
   }
+
+  @Test
+  public void test_parseMapping_on_multi_value_keyword() {
+    Map<String, Object> indexMapping =
+        Map.of("tags", Map.of("type", "keyword", "multi_value", true));
+    var parsed = OpenSearchDataType.parseMapping(indexMapping);
+    OpenSearchDataType tags = parsed.get("tags");
+    assertTrue(
+        tags instanceof OpenSearchArrayType,
+        "multi_value keyword should parse to OpenSearchArrayType");
+    assertEquals(ExprCoreType.ARRAY, tags.getExprCoreType());
+    // element type preserved (keyword -> STRING)
+    assertEquals(ExprCoreType.STRING, ((OpenSearchArrayType) tags).getElementType().getExprType());
+  }
+
+  @Test
+  public void test_parseMapping_on_multi_value_scalar_types() {
+    // A multi_value field of each scalar type must preserve its element type so the Calcite
+    // ARRAY<T> is typed correctly (long -> ARRAY<LONG>, double -> ARRAY<DOUBLE>, ...).
+    Map<String, Object> indexMapping =
+        Map.of(
+            "l", Map.of("type", "long", "multi_value", true),
+            "d", Map.of("type", "double", "multi_value", true),
+            "b", Map.of("type", "boolean", "multi_value", true),
+            "i", Map.of("type", "integer", "multi_value", true));
+    var parsed = OpenSearchDataType.parseMapping(indexMapping);
+    assertEquals(
+        ExprCoreType.LONG, ((OpenSearchArrayType) parsed.get("l")).getElementType().getExprType());
+    assertEquals(
+        ExprCoreType.DOUBLE,
+        ((OpenSearchArrayType) parsed.get("d")).getElementType().getExprType());
+    assertEquals(
+        ExprCoreType.BOOLEAN,
+        ((OpenSearchArrayType) parsed.get("b")).getElementType().getExprType());
+    assertEquals(
+        ExprCoreType.INTEGER,
+        ((OpenSearchArrayType) parsed.get("i")).getElementType().getExprType());
+  }
+
+  @Test
+  public void test_multi_value_false_or_absent_is_not_array() {
+    Map<String, Object> indexMapping =
+        Map.of(
+            "plain", Map.of("type", "keyword"),
+            "explicitFalse", Map.of("type", "long", "multi_value", false));
+    var parsed = OpenSearchDataType.parseMapping(indexMapping);
+    assertFalse(parsed.get("plain") instanceof OpenSearchArrayType);
+    assertFalse(parsed.get("explicitFalse") instanceof OpenSearchArrayType);
+  }
 }
