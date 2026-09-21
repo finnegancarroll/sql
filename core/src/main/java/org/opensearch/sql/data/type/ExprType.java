@@ -76,4 +76,15 @@ public interface ExprType {
   default ExprType getOriginalType() {
     return this;
   }
+
+  /**
+   * Get the element type of an ARRAY type, or {@code Optional.empty()} for non-array types (and for
+   * arrays whose element type is not known). Array-typed subtypes (e.g. a {@code multi_value}
+   * field) override this so the Calcite type conversion can build a typed {@code ARRAY<T>} rather
+   * than {@code ARRAY<ANY>}. Kept as a default here so core stays independent of the storage-layer
+   * subtypes.
+   */
+  default Optional<ExprType> getArrayElementType() {
+    return Optional.empty();
+  }
 }
