@@ -26,6 +26,38 @@ import org.opensearch.sql.data.type.ExprType;
 public class OpenSearchTypeFactoryTest {
 
   @Test
+  public void testArrayElementTypeIsPreservedNotAny() {
+    // An ExprType exposing an element type (as OpenSearchArrayType does for a multi_value field)
+    // must convert to a typed Calcite ARRAY<T>, not ARRAY<ANY>.
+    ExprType longArray =
+        new ExprType() {
+          @Override
+          public String typeName() {
+            return "array";
+          }
+
+          @Override
+          public java.util.Optional<ExprType> getArrayElementType() {
+            return java.util.Optional.of(ExprCoreType.LONG);
+          }
+        };
+
+    RelDataType relType = OpenSearchTypeFactory.convertExprTypeToRelDataType(longArray);
+
+    assertEquals(SqlTypeName.ARRAY, relType.getSqlTypeName());
+    assertNotNull(relType.getComponentType());
+    assertEquals(SqlTypeName.BIGINT, relType.getComponentType().getSqlTypeName());
+  }
+
+  @Test
+  public void testBareArrayCoreTypeStaysAny() {
+    // A plain ExprCoreType.ARRAY (no element type) still converts to ARRAY<ANY> for back-compat.
+    RelDataType relType = OpenSearchTypeFactory.convertExprTypeToRelDataType(ExprCoreType.ARRAY);
+    assertEquals(SqlTypeName.ARRAY, relType.getSqlTypeName());
+    assertEquals(SqlTypeName.ANY, relType.getComponentType().getSqlTypeName());
+  }
+
+  @Test
   public void testLeastRestrictivePreservesUdtWhenAllInputsSameUdt() {
     RelDataType ts1 = TYPE_FACTORY.createUDT(ExprUDT.EXPR_TIMESTAMP);
     RelDataType ts2 = TYPE_FACTORY.createUDT(ExprUDT.EXPR_TIMESTAMP);

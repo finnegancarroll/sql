@@ -194,7 +194,14 @@ public class OpenSearchTypeFactory extends JavaTypeFactoryImpl {
               "Unsupported conversion for OpenSearch Data type: " + fieldType.typeName());
       }
     } else {
-      if (fieldType.legacyTypeName().equalsIgnoreCase("binary")) {
+      if (fieldType.getArrayElementType().isPresent()) {
+        // multi_value field -> Calcite ARRAY<T>, recursively converting the element type so
+        // element-sensitive operators (typed mvindex, numeric aggregation after mvexpand, sorting,
+        // comparisons) bind against the real element type instead of ARRAY<ANY>.
+        RelDataType elementRelType =
+            convertExprTypeToRelDataType(fieldType.getArrayElementType().get(), nullable);
+        return TYPE_FACTORY.createArrayType(elementRelType, -1);
+      } else if (fieldType.legacyTypeName().equalsIgnoreCase("binary")) {
         return TYPE_FACTORY.createUDT(ExprUDT.EXPR_BINARY, nullable);
       } else if (fieldType.legacyTypeName().equalsIgnoreCase("timestamp")) {
         return TYPE_FACTORY.createUDT(ExprUDT.EXPR_TIMESTAMP, nullable);
