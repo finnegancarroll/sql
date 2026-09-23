@@ -241,4 +241,28 @@ public class CalciteMultiValueKeywordOperatorIT extends PPLIntegTestCase {
         ppl(String.format("source=%s | where id='d1' | mvexpand tags | fields id, tags", INDEX));
     verifyDataRowsInOrder(r, rows("d1", "prod"));
   }
+
+  // ==================== implicit =/!= as element membership (contains) ====================
+  // Fixture: d1[prod] d2[blue] d3[prod,blue] d4[green,prod,green].
+
+  @Test
+  public void testPplImplicitEqContains() throws IOException {
+    // tags = 'blue' -> lists containing 'blue': d2 [blue], d3 [prod,blue].
+    JSONObject r = ppl(String.format("source=%s | where tags = 'blue' | sort id | fields id", INDEX));
+    verifyDataRowsInOrder(r, rows("d2"), rows("d3"));
+  }
+
+  @Test
+  public void testPplImplicitNeqNotContains() throws IOException {
+    // tags != 'blue' -> lists NOT containing 'blue': d1 [prod], d4 [green,prod,green].
+    JSONObject r = ppl(String.format("source=%s | where tags != 'blue' | sort id | fields id", INDEX));
+    verifyDataRowsInOrder(r, rows("d1"), rows("d4"));
+  }
+
+  @Test
+  public void testPplImplicitEqContainsMultiOccurrence() throws IOException {
+    // tags = 'prod' -> d1 [prod], d3 [prod,blue], d4 [green,prod,green].
+    JSONObject r = ppl(String.format("source=%s | where tags = 'prod' | sort id | fields id", INDEX));
+    verifyDataRowsInOrder(r, rows("d1"), rows("d3"), rows("d4"));
+  }
 }
