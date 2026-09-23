@@ -111,7 +111,11 @@ public final class CoercionUtils {
     return castedArguments;
   }
 
-  private static @Nullable RexNode cast(RexBuilder builder, ExprType targetType, RexNode arg) {
+  /**
+   * Cast a single RexNode to the target ExprType using the shared widening/coercion rules. Returns
+   * the argument unchanged when no cast is needed, or {@code null} when the cast is impossible.
+   */
+  public static @Nullable RexNode cast(RexBuilder builder, ExprType targetType, RexNode arg) {
     ExprType argType = OpenSearchTypeFactory.convertRelDataTypeToExprType(arg.getType());
     if (!argType.shouldCast(targetType)) {
       return arg;
