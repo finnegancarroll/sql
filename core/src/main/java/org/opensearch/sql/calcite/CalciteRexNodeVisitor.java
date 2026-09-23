@@ -36,6 +36,7 @@ import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.sql.SqlIntervalQualifier;
 import org.apache.calcite.sql.SqlOperator;
+import org.apache.calcite.sql.fun.SqlLibraryOperators;
 import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.type.ArraySqlType;
 import org.apache.calcite.sql.type.SqlTypeName;
@@ -280,6 +281,17 @@ public class CalciteRexNodeVisitor extends AbstractNodeVisitor<RexNode, CalciteP
     RexNode left = analyze(node.getLeft(), context);
     RexNode right = analyze(node.getRight(), context);
     String op = node.getOperator();
+    // Implicit multi-value membership: `mv_field = x` / `mv_field != x` where mv_field is a
+    // multi_value field (typed ARRAY<T>) operates on the ELEMENTS, i.e. "the array contains x".
+    // Rewrite to ARRAY_CONTAINS (mapped to DataFusion array_has on the analytics-engine route) so
+    // `=` behaves like existential membership over the list, mirroring the implicit group-by-on-
+    // multi_value behavior. `!=` becomes NOT ARRAY_CONTAINS.
+    if ("=".equals(op) || "!=".equals(op) || "<>".equals(op)) {
+      RexNode membership = tryMakeArrayMembership(left, right, op, context);
+      if (membership != null) {
+        return membership;
+      }
+    }
     // Handle boolean_field != literal -> IS_NOT_TRUE/IS_NOT_FALSE
     if ("!=".equals(op) || "<>".equals(op)) {
       RexNode result = tryMakeBooleanNotEquals(left, right, context);
@@ -288,6 +300,47 @@ public class CalciteRexNodeVisitor extends AbstractNodeVisitor<RexNode, CalciteP
       }
     }
     return PPLFuncImpTable.INSTANCE.resolve(context.rexBuilder, op, left, right);
+  }
+
+  /**
+   * If exactly one operand is an ARRAY (a multi_value field) and the other is a scalar, build an
+   * element-membership predicate: {@code =} -> {@code ARRAY_CONTAINS(array, scalar)}, {@code
+   * !=}/{@code <>} -> {@code NOT ARRAY_CONTAINS(array, scalar)}. Returns {@code null} when neither
+   * side is an array (normal scalar comparison) or both sides are arrays (not a membership case).
+   */
+  private static @Nullable RexNode tryMakeArrayMembership(
+      RexNode left, RexNode right, String op, CalcitePlanContext context) {
+    boolean leftArray = SqlTypeUtil.isArray(left.getType());
+    boolean rightArray = SqlTypeUtil.isArray(right.getType());
+    // Exactly one side is an array -> membership; both/neither -> not a membership rewrite.
+    if (leftArray == rightArray) {
+      return null;
+    }
+    RexNode array = leftArray ? left : right;
+    RexNode element = leftArray ? right : left;
+    // Reconcile the search element to the array's element type so DataFusion array_has can bind
+    // (e.g. a PPL numeric literal 2.5 is DECIMAL but the list element is DOUBLE/Float64). Use the
+    // shared coercion path (CoercionUtils.cast) rather than a raw rexBuilder.makeCast, and only when
+    // the component type is a concrete comparable type — casting to an ANY/UDT component re-enters
+    // RexBuilder.makeLiteral and can recurse to a StackOverflowError.
+    RelDataType componentType = array.getType().getComponentType();
+    if (componentType != null
+        && componentType.getSqlTypeName() != org.apache.calcite.sql.type.SqlTypeName.ANY
+        && !element.getType().equals(componentType)) {
+      // Direct cast to the concrete component RelDataType (e.g. DECIMAL literal 2.5 -> DOUBLE to
+      // match a Float64 list element; DataFusion array_has will not coerce Decimal128 -> Float64).
+      // ANY components are gated out above: casting to ANY re-enters RexBuilder.makeLiteral and
+      // recurses to a StackOverflowError.
+      element = context.rexBuilder.makeCast(componentType, element);
+    }
+    // ARRAY_CONTAINS(array, element) -> BOOLEAN
+    RexNode contains =
+        context.rexBuilder.makeCall(SqlLibraryOperators.ARRAY_CONTAINS, array, element);
+    if ("=".equals(op)) {
+      return contains;
+    }
+    // != / <> -> NOT contains
+    return context.relBuilder.not(contains);
   }
 
   /**

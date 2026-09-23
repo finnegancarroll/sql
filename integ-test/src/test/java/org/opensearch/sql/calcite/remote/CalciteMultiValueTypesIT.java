@@ -201,4 +201,44 @@ public class CalciteMultiValueTypesIT extends PPLIntegTestCase {
                 "source=%s | where id='d1' | mvexpand bv | stats count() as c", INDEX));
     verifyDataRows(r, rows(2));
   }
+
+  // ==================== implicit =/!= as element membership (contains) ====================
+  // On a multi_value field, `field = x` means "the list contains x" (existential over elements);
+  // `field != x` means "the list does not contain x". Rewritten to ARRAY_CONTAINS / NOT.
+
+  @Test
+  public void testImplicitEqLongMembership() throws IOException {
+    // lv: d1[10,20] d2[30] d3[40,50,60] -> lv = 30 contains only d2.
+    JSONObject r = ppl(String.format("source=%s | where lv = 30 | sort id | fields id", INDEX));
+    verifyDataRowsInOrder(r, rows("d2"));
+  }
+
+  @Test
+  public void testImplicitEqLongMembershipMultiElement() throws IOException {
+    // lv = 20 -> only d1 [10,20]; lv = 50 -> only d3 [40,50,60].
+    JSONObject r = ppl(String.format("source=%s | where lv = 50 | sort id | fields id", INDEX));
+    verifyDataRowsInOrder(r, rows("d3"));
+  }
+
+  @Test
+  public void testImplicitNeqLongMembership() throws IOException {
+    // lv != 30 -> docs whose list does NOT contain 30: d1 [10,20], d3 [40,50,60].
+    JSONObject r = ppl(String.format("source=%s | where lv != 30 | sort id | fields id", INDEX));
+    verifyDataRowsInOrder(r, rows("d1"), rows("d3"));
+  }
+
+  @Test
+  public void testImplicitEqDoubleMembership() throws IOException {
+    // dv: d1[1.5,2.5] d2[3.5] d3[4.0,5.0,6.0] -> dv = 2.5 contains only d1.
+    JSONObject r = ppl(String.format("source=%s | where dv = 2.5 | sort id | fields id", INDEX));
+    verifyDataRowsInOrder(r, rows("d1"));
+  }
+
+  @Test
+  public void testImplicitEqBooleanMembership() throws IOException {
+    // bv: d1[true,false] d2[true] d3[false,true] -> bv = false contains d1, d3.
+    JSONObject r = ppl(String.format("source=%s | where bv = false | sort id | fields id", INDEX));
+    verifyDataRowsInOrder(r, rows("d1"), rows("d3"));
+  }
+
 }
