@@ -201,4 +201,144 @@ public class CalciteMultiValueTypesIT extends PPLIntegTestCase {
                 "source=%s | where id='d1' | mvexpand bv | stats count() as c", INDEX));
     verifyDataRows(r, rows(2));
   }
+
+  // ==================== per-type multi_value index CREATION ====================
+  // Regression coverage for the getMergeBuilder pluggableDataFormat-carry bug: each non-keyword
+  // scalar mapper must accept `multi_value: true` at index creation (the mapping round-trip / merge
+  // path rebuilds a settings-less Builder, which must still carry the pluggable-data-format flag).
+  // A regressed mapper fails creation with "unknown parameter [multi_value] on mapper [..]".
+
+  private void assertMultiValueCreatable(String field, String type) throws IOException {
+    String idx = "mv_create_" + type.replace("_", "");
+    try {
+      client().performRequest(new Request("DELETE", "/" + idx));
+    } catch (Exception ignored) {
+    }
+    String mapping =
+        "{\"settings\":{\"number_of_shards\":1,\"number_of_replicas\":0,"
+            + "\"index.pluggable.dataformat.enabled\":true,"
+            + "\"index.pluggable.dataformat\":\"composite\","
+            + "\"index.composite.primary_data_format\":\"parquet\","
+            + "\"index.composite.secondary_data_formats\":[\"lucene\"]},"
+            + "\"mappings\":{\"properties\":{"
+            + "\"" + field + "\":{\"type\":\"" + type + "\",\"multi_value\":true}}}}";
+    Request create = new Request("PUT", "/" + idx);
+    create.setJsonEntity(mapping);
+    // Throws ResponseException (HTTP 400) if the mapper rejects `multi_value` — the regression.
+    client().performRequest(create);
+    Request health = new Request("GET", "/_cluster/health/" + idx);
+    health.addParameter("wait_for_status", "yellow");
+    health.addParameter("timeout", "30s");
+    client().performRequest(health);
+    client().performRequest(new Request("DELETE", "/" + idx));
+  }
+
+  @Test
+  public void testCreateMultiValueByte() throws IOException {
+    assertMultiValueCreatable("f", "byte");
+  }
+
+  @Test
+  public void testCreateMultiValueShort() throws IOException {
+    assertMultiValueCreatable("f", "short");
+  }
+
+  @Test
+  public void testCreateMultiValueInteger() throws IOException {
+    assertMultiValueCreatable("f", "integer");
+  }
+
+  @Test
+  public void testCreateMultiValueLong() throws IOException {
+    assertMultiValueCreatable("f", "long");
+  }
+
+  @Test
+  public void testCreateMultiValueUnsignedLong() throws IOException {
+    assertMultiValueCreatable("f", "unsigned_long");
+  }
+
+  @Test
+  public void testCreateMultiValueFloat() throws IOException {
+    assertMultiValueCreatable("f", "float");
+  }
+
+  @Test
+  public void testCreateMultiValueHalfFloat() throws IOException {
+    assertMultiValueCreatable("f", "half_float");
+  }
+
+  @Test
+  public void testCreateMultiValueDouble() throws IOException {
+    assertMultiValueCreatable("f", "double");
+  }
+
+  @Test
+  public void testCreateMultiValueScaledFloat() throws IOException {
+    // scaled_float requires scaling_factor; add it alongside multi_value.
+    String idx = "mv_create_scaledfloat";
+    try {
+      client().performRequest(new Request("DELETE", "/" + idx));
+    } catch (Exception ignored) {
+    }
+    String mapping =
+        "{\"settings\":{\"number_of_shards\":1,\"number_of_replicas\":0,"
+            + "\"index.pluggable.dataformat.enabled\":true,"
+            + "\"index.pluggable.dataformat\":\"composite\","
+            + "\"index.composite.primary_data_format\":\"parquet\","
+            + "\"index.composite.secondary_data_formats\":[\"lucene\"]},"
+            + "\"mappings\":{\"properties\":{"
+            + "\"f\":{\"type\":\"scaled_float\",\"scaling_factor\":100,\"multi_value\":true}}}}";
+    Request create = new Request("PUT", "/" + idx);
+    create.setJsonEntity(mapping);
+    client().performRequest(create);
+    client().performRequest(new Request("DELETE", "/" + idx));
+  }
+
+  @Test
+  public void testCreateMultiValueBoolean() throws IOException {
+    assertMultiValueCreatable("f", "boolean");
+  }
+
+  @Test
+  public void testCreateMultiValueDate() throws IOException {
+    assertMultiValueCreatable("f", "date");
+  }
+
+  @Test
+  public void testCreateMultiValueIp() throws IOException {
+    assertMultiValueCreatable("f", "ip");
+  }
+
+  @Test
+  public void testCreateMultiValueBinary() throws IOException {
+    // binary requires stored source (store:true) to derive _source; unrelated to multi_value.
+    String idx = "mv_create_binary";
+    try {
+      client().performRequest(new Request("DELETE", "/" + idx));
+    } catch (Exception ignored) {
+    }
+    String mapping =
+        "{\"settings\":{\"number_of_shards\":1,\"number_of_replicas\":0,"
+            + "\"index.pluggable.dataformat.enabled\":true,"
+            + "\"index.pluggable.dataformat\":\"composite\","
+            + "\"index.composite.primary_data_format\":\"parquet\","
+            + "\"index.composite.secondary_data_formats\":[\"lucene\"]},"
+            + "\"mappings\":{\"properties\":{"
+            + "\"f\":{\"type\":\"binary\",\"store\":true,\"multi_value\":true}}}}";
+    Request create = new Request("PUT", "/" + idx);
+    create.setJsonEntity(mapping);
+    client().performRequest(create);
+    client().performRequest(new Request("DELETE", "/" + idx));
+  }
+
+  @Test
+  public void testCreateMultiValueText() throws IOException {
+    assertMultiValueCreatable("f", "text");
+  }
+
+  @Test
+  public void testCreateMultiValueMatchOnlyText() throws IOException {
+    assertMultiValueCreatable("f", "match_only_text");
+  }
 }
