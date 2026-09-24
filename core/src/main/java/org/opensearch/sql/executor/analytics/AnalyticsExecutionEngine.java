@@ -263,6 +263,19 @@ public class AnalyticsExecutionEngine implements ExecutionEngine {
       }
     }
     if (value instanceof List<?> list) {
+      // Render each element via the ARRAY's component type so UDT elements (IP/binary byte[], and
+      // date/time strings) get the same scalar treatment as top-level cells. Without this, a byte[]
+      // element falls through to ExprValueUtils.fromObjectValue and fails with
+      // "unsupported object class [B" (MV_NONKEYWORD_GAP: ARRAY<IP>/ARRAY<binary> read path).
+      RelDataType elementType = type != null ? type.getComponentType() : null;
+      if (elementType != null) {
+        List<ExprValue> rendered = new ArrayList<>(list.size());
+        for (Object element : list) {
+          rendered.add(toExprValue(element, elementType));
+        }
+        return ExprValueUtils.collectionValue(
+            rendered.stream().map(ExprValue::value).collect(java.util.stream.Collectors.toList()));
+      }
       return ExprValueUtils.collectionValue(stripEpochDatePrefixInList(list));
     }
     return ExprValueUtils.fromObjectValue(value);

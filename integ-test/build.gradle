@@ -920,6 +920,7 @@ integTest {
     // composite data format) fails at index creation with "unknown setting [index.composite.*]".
     exclude 'org/opensearch/sql/calcite/remote/CalciteMultiValueKeywordOperatorIT.class'
     exclude 'org/opensearch/sql/calcite/remote/CalciteMultiValueDistributedIT.class'
+    exclude 'org/opensearch/sql/calcite/remote/CalciteMultiValueTypesIT.class'
 
     exclude 'org/opensearch/sql/calcite/tracing/**'
 
@@ -1619,6 +1620,7 @@ task analyticsEngineMultiValueIT(type: RestIntegTestTask) {
     filter {
         includeTestsMatching 'org.opensearch.sql.calcite.remote.CalciteMultiValueKeywordOperatorIT'
         includeTestsMatching 'org.opensearch.sql.calcite.remote.CalciteMultiValueDistributedIT'
+        includeTestsMatching 'org.opensearch.sql.calcite.remote.CalciteMultiValueTypesIT'
     }
 
     // Surface per-test results in the CI log so this suite's execution is visible (these AE ITs
